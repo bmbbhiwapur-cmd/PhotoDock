@@ -144,35 +144,6 @@ def discover_and_list_all_heteroatoms(file_path):
                 hetero_counts[res_name] = hetero_counts.get(res_name, 0) + 1
     return hetero_counts
 
-def parse_bound_ligands(file_path):
-    ligands = {}
-    if not os.path.exists(file_path): return ligands
-    with open(file_path, "r") as f:
-        for line in f:
-            if line.startswith("HETATM"):
-                res_name = line[17:20].strip()
-                chain_id = line[21].strip() if line[21].strip() else "A"
-                try: res_seq = int(line[22:26].strip())
-                except ValueError: continue
-                if res_name in ["HOH", "WAT", "DOD"]: continue
-                key = f"{res_name}-{chain_id}-{res_seq}"
-                try:
-                    x, y, z = float(line[30:38].strip()), float(line[38:46].strip()), float(line[46:54].strip())
-                except ValueError: continue
-                if key not in ligands: ligands[key] = {"res": res_name, "chain": chain_id, "seq": res_seq, "coords": []}
-                ligands[key]["coords"].append((x, y, z))
-    processed_ligands = []
-    for key, info in ligands.items():
-        pts = info["coords"]
-        n_atoms = len(pts)
-        if n_atoms < 4: continue
-        cx, cy, cz = sum([p[0] for p in pts])/n_atoms, sum([p[1] for p in pts])/n_atoms, sum([p[2] for p in pts])/n_atoms
-        bx = max([p[0] for p in pts]) - min([p[0] for p in pts]) + 10.0
-        by = max([p[1] for p in pts]) - min([p[1] for p in pts]) + 10.0
-        bz = max([p[2] for p in pts]) - min([p[2] for p in pts]) + 10.0
-        processed_ligands.append({"ID": info["res"], "Chain": info["chain"], "ResSeq": info["seq"], "Atoms": n_atoms, "cx": round(cx, 2), "cy": round(cy, 2), "cz": round(cz, 2), "bx": round(bx, 1), "by": round(by, 1), "bz": round(bz, 1)})
-    return processed_ligands
-
 def identify_protein_cavities(pdbqt_file, max_pockets=5):
     coords = []
     if not os.path.exists(pdbqt_file): return []
@@ -416,7 +387,7 @@ def parse_vina_output_with_residues(stdout_text):
 
 def build_styled_html_table(df):
     html = '<table class="data-table" border="1" cellpadding="5" style="border-collapse: collapse; width:100%; text-align:left;"><thead><tr>'
-    for col in df.columns: html += f'<th style="background-color:#f2f2f2;">{col}</th>'
+    for col in df.columns: html += f'<th style="background-color:#f2f2f2; color:#111;">{col}</th>'
     html += '</tr></thead><tbody>'
     for _, row in df.iterrows():
         html += '<tr>'
@@ -426,8 +397,8 @@ def build_styled_html_table(df):
                 try:
                     if float(val) > 0: html += f'<td style="color: #c62828; font-weight: bold;">{val}</td>'
                     else: html += f'<td style="color: #1b5e20;">{val}</td>'
-                except: html += f'<td>{val}</td>'
-            else: html += f'<td>{val}</td>'
+                except: html += f'<td style="color:#111;">{val}</td>'
+            else: html += f'<td style="color:#111;">{val}</td>'
         html += '</tr>'
     html += '</tbody></table>'
     return html
@@ -577,7 +548,6 @@ if "mutated_azo_smiles" not in st.session_state: st.session_state.mutated_azo_sm
 if "comparative_run_complete" not in st.session_state: st.session_state.comparative_run_complete = False
 if "uff_cache" not in st.session_state: st.session_state.uff_cache = {}
 
-# Execution variables (Safe Scoping)
 run_single_btn = False
 run_comp_btn = False
 can_dock = False
@@ -599,19 +569,24 @@ with col_params:
     if current_p_name != st.session_state.protein_name: st.session_state.protein_name = current_p_name
     if current_p_id != st.session_state.pdb_id_display: st.session_state.pdb_id_display = current_p_id
 
-    cancer_receptors = {
-        "EGFR Kinase Domain (Lung/Breast Cancer)": "1M17",
-        "Estrogen Receptor Alpha (Breast Cancer)": "3ERT",
-        "BRAF V600E Mutant (Melanoma)": "4HJO",
-        "GLUT4 Glucose Transporter (Diabetes)": "7WSM"
+    # Updated Receptor Library with AMR Targets
+    target_receptors = {
+        "Cancer: EGFR Kinase Domain (Lung/Breast)": "1M17",
+        "Cancer: Estrogen Receptor Alpha (Breast)": "3ERT",
+        "Cancer: BRAF V600E Mutant (Melanoma)": "4HJO",
+        "Diabetes: GLUT4 Glucose Transporter": "7WSM",
+        "Antimicrobial: DNA Gyrase (S. aureus)": "4URO",
+        "Antimicrobial: FtsZ Cell Division Protein": "3VOA",
+        "Antimicrobial: DHFR (S. aureus)": "3SRW",
+        "Antimicrobial: PBP2a (MRSA)": "1VQQ"
     }
 
     protein_source = st.radio("Choose Protein Input Method:", ["Select Curated Target Receptor", "Type 4-Letter PDB ID", "Upload File (.pdb or .pdbqt)"])
     
     pdb_id_input = ""
     if protein_source == "Select Curated Target Receptor":
-        selected_receptor = st.selectbox("Select Target Receptor:", list(cancer_receptors.keys()))
-        pdb_id_input = cancer_receptors[selected_receptor]
+        selected_receptor = st.selectbox("Select Target Receptor:", list(target_receptors.keys()))
+        pdb_id_input = target_receptors[selected_receptor]
         st.info(f"Targeting PDB ID: `{pdb_id_input}`")
     elif protein_source == "Type 4-Letter PDB ID":
         pdb_id_input = st.text_input("Enter RCSB PDB ID", value="2AMB").strip()
@@ -666,12 +641,19 @@ with col_params:
 
     st.write("---")
     st.header("2. Phase 1: Small Molecule Phytochemical Setup")
+    
+    # Updated Phytochemical Library
     iks_library = {
         "Pterostilbene (Antidiabetic / Anticancer)": "COc1cc(C=Cc2ccc(O)cc2)cc(OC)c1",
         "Resveratrol (Antidiabetic / Anticancer)": "Oc1cc(O)cc(C=Cc2ccc(O)cc2)c1",
         "Combretastatin A-4 (Anticancer)": "COc1cc(C=Cc2ccc(O)c(OC)c2)cc(OC)c1OC",
+        "Psoralen (Antimicrobial)": "C1=CC2=C(C=C1)C3=C(C=CO3)OC2=O",
+        "Marmelosin/Imperatorin (Antimicrobial)": "CC(=CCOc1c2c(cc3c1oc(=O)cc3)cco2)C",
+        "Plumbagin (Antimicrobial)": "CC1=CC(=O)C2=C(C1=O)C(=CC=C2)O",
+        "Lawsone (Antimicrobial)": "O=C1C=C(O)C(=O)C2=CC=CC=C12",
+        "Bergapten (Antimicrobial)": "COC1=C2C(=CC3=C1OC(=O)C=C3)C=CO2"
     }
-    selected_phytochemical = st.selectbox("Select Native Trans-Stilbene Scaffold:", list(iks_library.keys()))
+    selected_phytochemical = st.selectbox("Select Native Scaffold:", list(iks_library.keys()))
     smiles_input_val = iks_library[selected_phytochemical]
 
     if st.button("📥 Load Ligand Structure"):
@@ -712,7 +694,7 @@ with col_params:
                             shutil.copy("ligand_trans.pdbqt", "ligand.pdbqt")
                             with open("ligand.pdbqt", "r") as f: st.session_state.serialized_ligand_block = f.read()
                     else: st.error("Failed to map constrained 3D coordinates.")
-                else: st.warning("No valid C=C bridge found.")
+                else: st.warning("No valid C=C bridge found in this molecule. Note: Compounds like Plumbagin and Lawsone require an external synthetic azo-linker, as they lack a native stilbene bridge.")
 
     if st.session_state.get("has_isomers", False):
         st.write("---")
@@ -866,12 +848,12 @@ with col_visual:
                 <div style="background-color:#f0f7f4; border-left:6px solid #2e7d32; padding:16px; border-radius:8px; margin-bottom:15px; font-family:sans-serif;">
                     <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #e0e8e4; padding-bottom:8px; margin-bottom:10px;">
                         <div>
-                            <span style="font-size:12px; color:#555; text-transform:uppercase; font-weight:bold;">Active Pose Vina Affinity</span><br>
+                            <span style="font-size:12px; color:#111; text-transform:uppercase; font-weight:bold;">Active Pose Vina Affinity</span><br>
                             <span style="font-size:36px; font-weight:900; color:{aff_color};">{pose_affinity_score} <span style="font-size:18px; font-weight:normal;">kcal/mol</span></span>
                         </div>
                     </div>
-                    <div style="font-size: 13px; color: #444; margin-bottom:8px;"><b>📍 UFF Initial Energy:</b> {pre_uff} kcal/mol | <b>📉 Optimized Energy:</b> {post_uff} kcal/mol</div>
-                    <div style="font-size: 13px; color: #444; background-color:#e8f5e9; padding:10px; border-radius:5px;">
+                    <div style="font-size: 13px; color: #111; margin-bottom:8px;"><b>📍 UFF Initial Energy:</b> {pre_uff} kcal/mol | <b>📉 Optimized Energy:</b> {post_uff} kcal/mol</div>
+                    <div style="font-size: 13px; color: #111; background-color:#e8f5e9; padding:10px; border-radius:5px;">
                         <b>🧬 Interacting Residues:</b> {res_str}<br>
                         <b>🔗 Contact Bond Types:</b> {bond_str}
                     </div>
@@ -925,11 +907,11 @@ if st.session_state.get("comparative_run_complete", False):
             box_c, border_c = "#fff3e0", "#ef6c00"
 
         st.markdown(f"""
-        <div style="background-color:{box_c}; border-left:6px solid {border_c}; padding:16px; border-radius:8px;">
-            <h4 style="margin-top:0;">Automated Analysis</h4>
-            <p style="font-size:14px; margin-bottom:5px;"><b>Trans (Active):</b> {t_aff} kcal/mol</p>
-            <p style="font-size:14px; margin-bottom:10px;"><b>Cis (Inactive):</b> {c_aff} kcal/mol</p>
-            <p style="font-size:14px; line-height:1.4;">{verdict}</p>
+        <div style="background-color:{box_c}; border-left:6px solid {border_c}; padding:16px; border-radius:8px; color:#111111;">
+            <h4 style="margin-top:0; color:#111111;">Automated Analysis</h4>
+            <p style="font-size:14px; margin-bottom:5px; color:#111111;"><b>Trans (Active):</b> {t_aff} kcal/mol</p>
+            <p style="font-size:14px; margin-bottom:10px; color:#111111;"><b>Cis (Inactive):</b> {c_aff} kcal/mol</p>
+            <p style="font-size:14px; line-height:1.4; color:#111111;">{verdict}</p>
         </div>
         """, unsafe_allow_html=True)
         
@@ -954,6 +936,16 @@ if st.session_state.get("comparative_run_complete", False):
             st.markdown("#### Cis Isomer Interactions")
             if int_c: st.dataframe(pd.DataFrame(int_c)[["Residue Contact", "Interaction Type", "Distance (Å)"]], hide_index=True, use_container_width=True)
             
+    # Redraw the 2D Isomer Images at the bottom of the report
+    st.write("---")
+    st.markdown("### 2D Isomer Structural Verification")
+    engine = Azologizer()
+    col_2d_trans_report, col_2d_cis_report = st.columns(2)
+    try:
+        with col_2d_trans_report: st.image(engine.get_2d_isomer_image(st.session_state.mutated_azo_smiles, "trans"), caption="2D Trans Isomer")
+        with col_2d_cis_report: st.image(engine.get_2d_isomer_image(st.session_state.mutated_azo_smiles, "cis"), caption="2D Cis Isomer")
+    except Exception: pass
+            
     comp_html_report = f"""<!DOCTYPE html>
     <html>
     <head><title>PhotoDock Comparative Report</title></head>
@@ -962,8 +954,8 @@ if st.session_state.get("comparative_run_complete", False):
         <p><b>Target Protein:</b> {st.session_state.protein_name}</p>
         <p><b>Base Azo-Scaffold:</b> {st.session_state.get('mutated_azo_smiles', 'N/A')}</p>
         <hr>
-        <div style="background-color:{box_c}; border-left:6px solid {border_c}; padding:16px; border-radius:8px;">
-            <h3>Comparative Statement (ΔΔG)</h3>
+        <div style="background-color:{box_c}; border-left:6px solid {border_c}; padding:16px; border-radius:8px; color:#111111;">
+            <h3 style="color:#111111;">Comparative Statement (ΔΔG)</h3>
             <p><b>Trans Isomer Affinity (Dark State):</b> {t_aff} kcal/mol</p>
             <p><b>Cis Isomer Affinity (Light State):</b> {c_aff} kcal/mol</p>
             <p><b>Delta G Shift:</b> {delta_g_switch} kcal/mol</p>

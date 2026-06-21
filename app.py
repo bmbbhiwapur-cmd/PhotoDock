@@ -284,10 +284,13 @@ def split_docking_poses(poses_file_path):
             else: current_lines.append(line)
     return poses
 
-def get_top_affinity(stdout_text):
-    for line in stdout_text.split("\n"):
-        m = re.match(r"^\s*1\s+([-+]?\d+\.\d+)", line)
-        if m: return float(m.group(1))
+def get_top_affinity_from_pdbqt(file_path):
+    """Directly extracts the topmost REMARK VINA RESULT from a saved PDBQT file."""
+    if not os.path.exists(file_path): return 0.0
+    with open(file_path, 'r') as f:
+        for line in f:
+            if line.startswith("REMARK VINA RESULT:"):
+                return float(line.split()[3])
     return 0.0
 
 # --- VISUALIZATION CONSTRUCTS ---
@@ -371,7 +374,7 @@ if "comparative_run_complete" not in st.session_state: st.session_state.comparat
 
 if st.button("🔄 Reset Entire Environment", type="secondary"):
     for key in list(st.session_state.keys()): del st.session_state[key]
-    for f in ["protein.pdbqt", "ligand.pdbqt", "docking_poses.pdbqt", "docking_trans.pdbqt", "docking_cis.pdbqt", "temp_lig_state.pdb", "ligand_trans.pdbqt", "ligand_cis.pdbqt"]:
+    for f in ["protein.pdbqt", "ligand.pdbqt", "ligand_native.pdbqt", "docking_poses.pdbqt", "docking_native.pdbqt", "docking_trans.pdbqt", "docking_cis.pdbqt", "temp_lig_state.pdb", "ligand_trans.pdbqt", "ligand_cis.pdbqt"]:
         if os.path.exists(f): os.remove(f)
     st.rerun()
 
@@ -411,6 +414,8 @@ if st.button("📥 Load Ligand Structure"):
     pub_data = fetch_ligand_data_from_pubchem(smiles_input_val)
     ok, _ = convert_smiles_to_pdbqt(smiles_input_val, "ligand.pdbqt")
     if ok:
+        # Save a persistent copy of the Native ligand for the Comparative execution
+        shutil.copy("ligand.pdbqt", "ligand_native.pdbqt")
         st.session_state.ligand_ready = True
         st.session_state.smiles_cache = smiles_input_val
         st.success(f"Loaded: {pub_data['name']}")
@@ -455,24 +460,31 @@ if st.session_state.get("has_isomers", False):
 
     exhaustiveness = st.slider("Search Exhaustiveness", 4, 32, 8)
     
+    can_dock = bool(st.session_state.target_ready and st.session_state.ligand_ready)
+
     st.write("---")
     st.header("🚀 4. Execute Comparative Photo-Docking")
-    st.markdown("This will run AutoDock Vina simultaneously on both the **Trans** (Dark State) and **Cis** (Light State) isomers in the exact same receptor cavity to compare binding drop-off.")
+    st.markdown("This will run AutoDock Vina sequentially on the **Native** (Original), **Trans** (Dark State) and **Cis** (Light State) isomers in the exact same receptor cavity to construct a comparative matrix.")
     
-    if st.button("⚡ Run Comparative Docking (Trans vs Cis)", type="primary"):
-        progress_bar = st.progress(0, text="Initializing Trans Isomer Docking...")
+    if st.button("⚡ Run Full Comparative Docking Sequence", type="primary", disabled=not can_dock):
+        progress_bar = st.progress(0, text="Docking Native Ligand...")
         
-        # 1. Dock Trans
+        # 1. Dock Native Original
+        if os.path.exists("ligand_native.pdbqt"):
+            cmd_native = ["./vina", "--receptor", "protein.pdbqt", "--ligand", "ligand_native.pdbqt", "--center_x", str(grid_cx), "--center_y", str(grid_cy), "--center_z", str(grid_cz), "--size_x", str(grid_sx), "--size_y", str(grid_sy), "--size_z", str(grid_sz), "--exhaustiveness", str(exhaustiveness), "--out", "docking_native.pdbqt"]
+            subprocess.run(cmd_native, capture_output=True, text=True)
+            
+        progress_bar.progress(33, text="Docking Trans Isomer (Dark State)...")
+        
+        # 2. Dock Trans
         cmd_trans = ["./vina", "--receptor", "protein.pdbqt", "--ligand", "ligand_trans.pdbqt", "--center_x", str(grid_cx), "--center_y", str(grid_cy), "--center_z", str(grid_cz), "--size_x", str(grid_sx), "--size_y", str(grid_sy), "--size_z", str(grid_sz), "--exhaustiveness", str(exhaustiveness), "--out", "docking_trans.pdbqt"]
-        t_proc = subprocess.run(cmd_trans, capture_output=True, text=True)
-        st.session_state.raw_trans_log = t_proc.stdout
+        subprocess.run(cmd_trans, capture_output=True, text=True)
         
-        progress_bar.progress(50, text="Trans Docking Complete. Initializing Cis Isomer Docking...")
+        progress_bar.progress(66, text="Docking Cis Isomer (Light State)...")
         
-        # 2. Dock Cis
+        # 3. Dock Cis
         cmd_cis = ["./vina", "--receptor", "protein.pdbqt", "--ligand", "ligand_cis.pdbqt", "--center_x", str(grid_cx), "--center_y", str(grid_cy), "--center_z", str(grid_cz), "--size_x", str(grid_sx), "--size_y", str(grid_sy), "--size_z", str(grid_sz), "--exhaustiveness", str(exhaustiveness), "--out", "docking_cis.pdbqt"]
-        c_proc = subprocess.run(cmd_cis, capture_output=True, text=True)
-        st.session_state.raw_cis_log = c_proc.stdout
+        subprocess.run(cmd_cis, capture_output=True, text=True)
         
         progress_bar.progress(100, text="Comparative Docking Complete!")
         st.session_state.comparative_run_complete = True
@@ -483,40 +495,49 @@ if st.session_state.comparative_run_complete:
     st.write("---")
     st.header("📊 5. Photopharmacology Analytical Report")
     
-    # Extract affinities
-    t_aff = get_top_affinity(st.session_state.raw_trans_log)
-    c_aff = get_top_affinity(st.session_state.raw_cis_log)
+    n_aff = get_top_affinity_from_pdbqt("docking_native.pdbqt")
+    t_aff = get_top_affinity_from_pdbqt("docking_trans.pdbqt")
+    c_aff = get_top_affinity_from_pdbqt("docking_cis.pdbqt")
     
-    delta_g = round(c_aff - t_aff, 2)
+    delta_g_switch = round(c_aff - t_aff, 2)
     
-    # Dynamic Statement Logic
-    if delta_g > 1.5:
-        verdict = f"**Successful Switch Effect:** The massive shape change caused a **{delta_g} kcal/mol penalty** in binding energy. Light exposure successfully turns this drug 'OFF'."
-        box_color = "#e8f5e9"
-        border = "#2e7d32"
-    elif delta_g < -1.5:
-        verdict = f"**Reverse Switch Effect:** The Cis isomer binds better! Light exposure will turn this drug 'ON'. ΔΔG shift: **{delta_g} kcal/mol**."
-        box_color = "#e3f2fd"
-        border = "#1565c0"
-    else:
-        verdict = f"**Ineffective Switch:** Both isomers bind with similar affinity (ΔΔG: **{delta_g} kcal/mol**). The pocket is too large or flexible. A different switch position is required."
-        box_color = "#fff3e0"
-        border = "#ef6c00"
+    comp_data = {
+        "Compound State": ["Native Scaffold (Original)", "Trans-Azo (Dark State / Active)", "Cis-Azo (Light State / Inactive)"],
+        "Top Affinity (kcal/mol)": [n_aff, t_aff, c_aff],
+        "ΔG vs Native": ["0.00", f"{round(t_aff - n_aff, 2):.2f}", f"{round(c_aff - n_aff, 2):.2f}"]
+    }
+    df_comp = pd.DataFrame(comp_data)
+    
+    col_tab, col_stmt = st.columns([1.5, 1])
+    with col_tab:
+        st.markdown("### Binding Affinity Comparison Matrix")
+        st.dataframe(df_comp, hide_index=True, use_container_width=True)
+        
+    with col_stmt:
+        if delta_g_switch > 1.5:
+            verdict = f"**Successful Switch Effect:** The massive shape change caused a **+{delta_g_switch} kcal/mol** penalty in binding energy (loss of affinity vs trans). Light exposure successfully turns this drug 'OFF'."
+            box_c, border_c = "#e8f5e9", "#2e7d32"
+        elif delta_g_switch < -1.5:
+            verdict = f"**Reverse Switch Effect:** The Cis isomer binds significantly better (**{delta_g_switch} kcal/mol** shift). Light exposure will turn this drug 'ON'."
+            box_c, border_c = "#e3f2fd", "#1565c0"
+        else:
+            verdict = f"**Ineffective Switch:** Both isomers bind with similar affinity (ΔΔG: **{delta_g_switch} kcal/mol**). The pocket is too large or flexible to block the bent isomer."
+            box_c, border_c = "#fff3e0", "#ef6c00"
 
-    st.markdown(f"""
-    <div style="background-color:{box_color}; border-left:6px solid {border}; padding:16px; border-radius:8px; margin-bottom:20px;">
-        <h3 style="margin-top:0;">Comparative Binding Statement (ΔΔG)</h3>
-        <p style="font-size:16px;">The <b>Trans isomer (Dark State)</b> binds with an affinity of <b style="color:#2e7d32;">{t_aff} kcal/mol</b>, perfectly mimicking the native drug. 
-        When triggered by light, it converts to the <b>Cis isomer</b>, altering the spatial geometry and shifting the affinity to <b style="color:#c62828;">{c_aff} kcal/mol</b>.</p>
-        <p style="font-size:16px;">{verdict}</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # Render Dual 3D Viewport
+        st.markdown(f"""
+        <div style="background-color:{box_c}; border-left:6px solid {border_c}; padding:16px; border-radius:8px;">
+            <h4 style="margin-top:0;">Automated Analysis</h4>
+            <p style="font-size:14px; margin-bottom:5px;"><b>Trans (Active):</b> {t_aff} kcal/mol</p>
+            <p style="font-size:14px; margin-bottom:10px;"><b>Cis (Inactive):</b> {c_aff} kcal/mol</p>
+            <p style="font-size:14px; line-height:1.4;">{verdict}</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    st.markdown("### 🔬 Comparative 3D Binding Topologies")
     poses_t = split_docking_poses("docking_trans.pdbqt")
     poses_c = split_docking_poses("docking_cis.pdbqt")
     
-    with open("protein.pdbqt", "r") as f: prot_data = f.read()
-    
-    if 1 in poses_t and 1 in poses_c:
-        render_dual_docking_viewport(prot_data, poses_t[1], poses_c[1])
+    if os.path.exists("protein.pdbqt"):
+        with open("protein.pdbqt", "r") as f: prot_data = f.read()
+        if 1 in poses_t and 1 in poses_c:
+            render_dual_docking_viewport(prot_data, poses_t[1], poses_c[1])

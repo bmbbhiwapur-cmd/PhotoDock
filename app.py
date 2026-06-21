@@ -11,6 +11,8 @@ import pandas as pd
 import streamlit.components.v1 as components
 from rdkit import Chem
 from rdkit.Chem import AllChem, Draw
+import base64
+from io import BytesIsO
 
 # --- CLOUD CONTEXT ENGINE MANAGEMENT ---
 def ensure_linux_vina_exists():
@@ -143,6 +145,35 @@ def discover_and_list_all_heteroatoms(file_path):
                 if res_name in ["HOH", "WAT", "DOD"]: continue
                 hetero_counts[res_name] = hetero_counts.get(res_name, 0) + 1
     return hetero_counts
+
+def parse_bound_ligands(file_path):
+    ligands = {}
+    if not os.path.exists(file_path): return ligands
+    with open(file_path, "r") as f:
+        for line in f:
+            if line.startswith("HETATM"):
+                res_name = line[17:20].strip()
+                chain_id = line[21].strip() if line[21].strip() else "A"
+                try: res_seq = int(line[22:26].strip())
+                except ValueError: continue
+                if res_name in ["HOH", "WAT", "DOD"]: continue
+                key = f"{res_name}-{chain_id}-{res_seq}"
+                try:
+                    x, y, z = float(line[30:38].strip()), float(line[38:46].strip()), float(line[46:54].strip())
+                except ValueError: continue
+                if key not in ligands: ligands[key] = {"res": res_name, "chain": chain_id, "seq": res_seq, "coords": []}
+                ligands[key]["coords"].append((x, y, z))
+    processed_ligands = []
+    for key, info in ligands.items():
+        pts = info["coords"]
+        n_atoms = len(pts)
+        if n_atoms < 4: continue
+        cx, cy, cz = sum([p[0] for p in pts])/n_atoms, sum([p[1] for p in pts])/n_atoms, sum([p[2] for p in pts])/n_atoms
+        bx = max([p[0] for p in pts]) - min([p[0] for p in pts]) + 10.0
+        by = max([p[1] for p in pts]) - min([p[1] for p in pts]) + 10.0
+        bz = max([p[2] for p in pts]) - min([p[2] for p in pts]) + 10.0
+        processed_ligands.append({"ID": info["res"], "Chain": info["chain"], "ResSeq": info["seq"], "Atoms": n_atoms, "cx": round(cx, 2), "cy": round(cy, 2), "cz": round(cz, 2), "bx": round(bx, 1), "by": round(by, 1), "bz": round(bz, 1)})
+    return processed_ligands
 
 def identify_protein_cavities(pdbqt_file, max_pockets=5):
     coords = []
@@ -396,7 +427,7 @@ def build_styled_html_table(df):
             if col == 'Affinity (kcal/mol)':
                 try:
                     if float(val) > 0: html += f'<td style="color: #c62828; font-weight: bold;">{val}</td>'
-                    else: html += f'<td style="color: #1b5e20;">{val}</td>'
+                    else: html += f'<td style="color: #1b5e20; font-weight: bold;">{val}</td>'
                 except: html += f'<td style="color:#111;">{val}</td>'
             else: html += f'<td style="color:#111;">{val}</td>'
         html += '</tr>'
@@ -404,6 +435,64 @@ def build_styled_html_table(df):
     return html
 
 # --- VISUALIZATION CONSTRUCTS ---
+def render_photopharmacology_tutorial():
+    """Renders a custom HTML/JS interactive animation to explain the Cis/Trans shape shifting."""
+    html_code = """
+    <div style="font-family: sans-serif; background: #f0f7f4; padding: 20px; border-radius: 10px; border: 2px solid #2e7d32; text-align: center;">
+        <h3 style="margin-top: 0; color: #111;">Interactive Mechanism: The Photopharmacology Switch</h3>
+        <p style="font-size: 14px; color: #333;">Click the buttons below to see how the geometry affects receptor binding.</p>
+        <div style="margin-bottom: 20px;">
+            <button onclick="playAnim('native')" style="padding: 10px 16px; margin: 5px; cursor: pointer; background: #2e7d32; color: white; border: none; border-radius: 4px; font-weight:bold;">1. Native Scaffold (Original)</button>
+            <button onclick="playAnim('trans')" style="padding: 10px 16px; margin: 5px; cursor: pointer; background: #1565c0; color: white; border: none; border-radius: 4px; font-weight:bold;">2. Trans-Azo (Dark State)</button>
+            <button onclick="playAnim('cis')" style="padding: 10px 16px; margin: 5px; cursor: pointer; background: #c62828; color: white; border: none; border-radius: 4px; font-weight:bold;">3. Cis-Azo (Light State)</button>
+        </div>
+        <div style="position: relative; width: 100%; max-width: 500px; height: 300px; margin: 0 auto; background: white; border: 2px dashed #ccc; border-radius: 8px; overflow: hidden;">
+            <div style="position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); width: 140px; height: 120px; border: 8px solid #555; border-top: none; border-radius: 0 0 30px 30px; background: #e0e0e0; box-shadow: inset 0px -10px 20px rgba(0,0,0,0.1);">
+                <div style="text-align: center; margin-top: 50px; font-weight: bold; color: #111;">Receptor Cavity</div>
+            </div>
+            <div id="drug" style="position: absolute; top: 20px; left: 50%; transform: translateX(-50%); width: 30px; height: 100px; background: #2e7d32; transition: all 0.8s cubic-bezier(0.25, 0.8, 0.25, 1); transform-origin: center;"></div>
+            <div id="status" style="position: absolute; top: 15px; width: 100%; text-align: center; font-weight: bold; font-size: 16px; color: #2e7d32; padding: 0 10px;"></div>
+        </div>
+        <script>
+            function playAnim(state) {
+                const drug = document.getElementById('drug');
+                const status = document.getElementById('status');
+                
+                if (state === 'native') {
+                    drug.style.background = '#2e7d32';
+                    drug.style.height = '100px';
+                    drug.style.width = '30px';
+                    drug.style.marginLeft = '-15px';
+                    drug.style.borderRadius = '15px';
+                    drug.style.top = '120px'; 
+                    status.innerText = "Native Scaffold: Fits Perfectly (Drug ON)";
+                    status.style.color = "#2e7d32";
+                } else if (state === 'trans') {
+                    drug.style.background = '#1565c0';
+                    drug.style.height = '100px';
+                    drug.style.width = '30px';
+                    drug.style.marginLeft = '-15px';
+                    drug.style.borderRadius = '15px';
+                    drug.style.top = '120px'; 
+                    status.innerText = "Trans-Azo: Mimics Native Shape (Drug ON)";
+                    status.style.color = "#1565c0";
+                } else if (state === 'cis') {
+                    drug.style.background = '#c62828';
+                    drug.style.height = '50px'; 
+                    drug.style.width = '120px'; 
+                    drug.style.marginLeft = '-60px';
+                    drug.style.borderRadius = '20px 20px 5px 5px';
+                    drug.style.top = '70px'; 
+                    status.innerText = "Cis-Azo: Bent Shape Clashes with Walls (Drug OFF)";
+                    status.style.color = "#c62828";
+                }
+            }
+            setTimeout(() => playAnim('native'), 500);
+        </script>
+    </div>
+    """
+    components.html(html_code, height=470)
+
 def render_isomer_comparison(trans_data, cis_data):
     html_content = f"""
     <div style="display: flex; width: 100%; justify-content: space-between; gap: 10px;">
@@ -548,6 +637,7 @@ if "mutated_azo_smiles" not in st.session_state: st.session_state.mutated_azo_sm
 if "comparative_run_complete" not in st.session_state: st.session_state.comparative_run_complete = False
 if "uff_cache" not in st.session_state: st.session_state.uff_cache = {}
 
+# Ensure Action Scopes
 run_single_btn = False
 run_comp_btn = False
 can_dock = False
@@ -642,16 +732,19 @@ with col_params:
     st.write("---")
     st.header("2. Phase 1: Small Molecule Phytochemical Setup")
     
-    # Updated Phytochemical Library
+    # Updated Phytochemical Library (Native C=C bridges + New Antimicrobials)
     iks_library = {
         "Pterostilbene (Antidiabetic / Anticancer)": "COc1cc(C=Cc2ccc(O)cc2)cc(OC)c1",
         "Resveratrol (Antidiabetic / Anticancer)": "Oc1cc(O)cc(C=Cc2ccc(O)cc2)c1",
         "Combretastatin A-4 (Anticancer)": "COc1cc(C=Cc2ccc(O)c(OC)c2)cc(OC)c1OC",
-        "Psoralen (Antimicrobial)": "C1=CC2=C(C=C1)C3=C(C=CO3)OC2=O",
-        "Marmelosin/Imperatorin (Antimicrobial)": "CC(=CCOc1c2c(cc3c1oc(=O)cc3)cco2)C",
-        "Plumbagin (Antimicrobial)": "CC1=CC(=O)C2=C(C1=O)C(=CC=C2)O",
-        "Lawsone (Antimicrobial)": "O=C1C=C(O)C(=O)C2=CC=CC=C12",
-        "Bergapten (Antimicrobial)": "COC1=C2C(=CC3=C1OC(=O)C=C3)C=CO2"
+        "Caffeic Acid (Antimicrobial)": "OC1=CC(=CC(=C1)O)C=CC(=O)O",
+        "Ferulic Acid (Antimicrobial)": "COC1=C(C=CC(=C1)C=CC(=O)O)O",
+        "Curcumin (Antimicrobial)": "COC1=C(C=CC(=C1)C=CC(=O)CC(=O)C=CC2=CC(=C(C=C2)O)OC)O",
+        "Psoralen (Antimicrobial - No C=C bridge)": "C1=CC2=C(C=C1)C3=C(C=CO3)OC2=O",
+        "Marmelosin/Imperatorin (Antimicrobial - No bridge)": "CC(=CCOc1c2c(cc3c1oc(=O)cc3)cco2)C",
+        "Plumbagin (Antimicrobial - No C=C bridge)": "CC1=CC(=O)C2=C(C1=O)C(=CC=C2)O",
+        "Lawsone (Antimicrobial - No C=C bridge)": "O=C1C=C(O)C(=O)C2=CC=CC=C12",
+        "Bergapten (Antimicrobial - No C=C bridge)": "COC1=C2C(=CC3=C1OC(=O)C=C3)C=CO2"
     }
     selected_phytochemical = st.selectbox("Select Native Scaffold:", list(iks_library.keys()))
     smiles_input_val = iks_library[selected_phytochemical]
@@ -694,7 +787,7 @@ with col_params:
                             shutil.copy("ligand_trans.pdbqt", "ligand.pdbqt")
                             with open("ligand.pdbqt", "r") as f: st.session_state.serialized_ligand_block = f.read()
                     else: st.error("Failed to map constrained 3D coordinates.")
-                else: st.warning("No valid C=C bridge found in this molecule. Note: Compounds like Plumbagin and Lawsone require an external synthetic azo-linker, as they lack a native stilbene bridge.")
+                else: st.warning("No valid free C=C bridge found in this molecule. Note: Compounds like Plumbagin and Lawsone require an external synthetic azo-linker, as they lack a native stilbene bridge.")
 
     if st.session_state.get("has_isomers", False):
         st.write("---")
@@ -725,7 +818,6 @@ with col_params:
         
         st.markdown("Run AutoDock Vina sequentially on **Native**, **Trans**, and **Cis** to construct a comparative matrix.")
         run_comp_btn = st.button("⚡ Run Full Comparative Docking Sequence", type="primary", disabled=not can_dock)
-
 
 # --- DOCKING EXECUTION LOGIC ---
 if run_single_btn and can_dock:
@@ -777,6 +869,9 @@ elif run_comp_btn and can_dock:
 with col_visual:
     st.header("5. Active Viewport Canvas")
     
+    if not st.session_state.target_ready and not st.session_state.ligand_ready:
+        render_photopharmacology_tutorial()
+    
     if st.session_state.docking_results_raw is None and not st.session_state.get("comparative_run_complete", False):
         if st.session_state.get("has_isomers", False):
             st.markdown("### 🔬 Structural Geometric Comparison")
@@ -811,7 +906,7 @@ with col_visual:
                     """
                     components.html(ligand_html, height=450)
                 
-    elif st.session_state.docking_results_raw is not None:
+    elif st.session_state.docking_results_raw is not None and not st.session_state.get("comparative_run_complete", False):
         st.subheader("Interactive Single Run Complex Viewport")
         if os.path.exists("docking_poses.pdbqt"):
             parsed_poses = split_docking_poses("docking_poses.pdbqt")

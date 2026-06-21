@@ -17,7 +17,6 @@ import json
 # RDKit imports
 from rdkit import Chem
 from rdkit.Chem import AllChem, Draw, Descriptors, Crippen
-from rdkit.Chem.Draw import IPythonConsole
 
 # ==================== CONFIGURATION ====================
 st.set_page_config(

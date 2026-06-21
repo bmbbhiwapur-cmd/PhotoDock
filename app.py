@@ -5,6 +5,7 @@
 import streamlit as st
 import time
 import os
+import pandas as pd
 
 # Local module imports
 from modules.ligand_library import IKS_LIGANDS
@@ -27,7 +28,6 @@ st.set_page_config(
 # ==================== CUSTOM CSS STYLING ====================
 st.markdown("""
 <style>
-    /* Main header gradient */
     .main-header {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         padding: 30px;
@@ -37,152 +37,52 @@ st.markdown("""
         margin-bottom: 30px;
         box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
     }
-    .main-header h1 {
-        font-size: 2.5em;
-        margin-bottom: 10px;
-    }
-    .main-header h3 {
-        font-weight: 300;
-        opacity: 0.9;
-    }
+    .main-header h1 { font-size: 2.5em; margin-bottom: 10px; }
+    .main-header h3 { font-weight: 300; opacity: 0.9; }
     
-    /* Card styles */
     .card-dark {
         background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
-        border-radius: 15px;
-        padding: 20px;
-        color: white;
-        margin: 10px 0;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+        border-radius: 15px; padding: 20px; color: white;
+        margin: 10px 0; box-shadow: 0 4px 10px rgba(0,0,0,0.2);
     }
     .card-light {
         background: linear-gradient(135deg, #e74c3c 0%, #f39c12 100%);
-        border-radius: 15px;
-        padding: 20px;
-        color: white;
-        margin: 10px 0;
-        box-shadow: 0 4px 10px rgba(231, 76, 60, 0.3);
+        border-radius: 15px; padding: 20px; color: white;
+        margin: 10px 0; box-shadow: 0 4px 10px rgba(231, 76, 60, 0.3);
     }
     .card-green {
         background: linear-gradient(135deg, #27ae60 0%, #2ecc71 100%);
-        border-radius: 15px;
-        padding: 20px;
-        color: white;
-        margin: 10px 0;
-        box-shadow: 0 4px 10px rgba(39, 174, 96, 0.3);
+        border-radius: 15px; padding: 20px; color: white;
+        margin: 10px 0; box-shadow: 0 4px 10px rgba(39, 174, 96, 0.3);
     }
-    .card-info {
-        background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
-        border-radius: 15px;
-        padding: 20px;
-        color: white;
-        margin: 10px 0;
-        box-shadow: 0 4px 10px rgba(52, 152, 219, 0.3);
-    }
-    
-    /* Energy display */
     .energy-big {
-        font-size: 3em;
-        font-weight: bold;
-        text-align: center;
-        margin: 10px 0;
+        font-size: 3em; font-weight: bold; text-align: center; margin: 10px 0;
     }
-    
-    /* Residue chip */
     .residue-chip {
-        display: inline-block;
-        background: rgba(255,255,255,0.15);
-        padding: 8px 15px;
-        border-radius: 20px;
-        margin: 4px;
-        font-size: 0.9em;
-        border: 1px solid rgba(255,255,255,0.3);
-        color: white;
+        display: inline-block; background: rgba(255,255,255,0.15);
+        padding: 8px 15px; border-radius: 20px; margin: 4px;
+        font-size: 0.9em; border: 1px solid rgba(255,255,255,0.3); color: white;
     }
-    
-    /* Section title */
     .section-title {
-        font-size: 1.2em;
-        font-weight: 600;
-        margin: 15px 0 10px 0;
-        border-bottom: 2px solid #667eea;
-        padding-bottom: 5px;
-        color: #2c3e50;
+        font-size: 1.2em; font-weight: 600; margin: 15px 0 10px 0;
+        border-bottom: 2px solid #667eea; padding-bottom: 5px; color: #2c3e50;
     }
-    
-    /* Info box */
     .info-box {
-        background: #f0f8ff;
-        padding: 15px;
-        border-radius: 10px;
-        border-left: 4px solid #228B22;
-        margin: 10px 0;
+        background: #f0f8ff; padding: 15px; border-radius: 10px;
+        border-left: 4px solid #228B22; margin: 10px 0;
     }
     .info-box-red {
-        background: #fff0f5;
-        padding: 15px;
-        border-radius: 10px;
-        border-left: 4px solid #DC143C;
-        margin: 10px 0;
+        background: #fff0f5; padding: 15px; border-radius: 10px;
+        border-left: 4px solid #DC143C; margin: 10px 0;
     }
-    
-    /* Footer */
     .footer {
-        text-align: center;
-        color: #888;
-        padding: 20px;
-        margin-top: 30px;
-        border-top: 1px solid #eee;
-    }
-    
-    /* Animation container */
-    .anim-container {
-        background: #1a1a2e;
-        color: #00ff41;
-        padding: 20px;
-        border-radius: 10px;
-        font-family: 'Courier New', monospace;
-    }
-    
-    /* Step indicator */
-    .step-active {
-        background: #667eea;
-        color: white;
-        padding: 10px;
-        border-radius: 10px;
-        font-weight: bold;
-        text-align: center;
-    }
-    .step-completed {
-        background: #27ae60;
-        color: white;
-        padding: 10px;
-        border-radius: 10px;
-        text-align: center;
-    }
-    .step-pending {
-        background: #ecf0f1;
-        color: #7f8c8d;
-        padding: 10px;
-        border-radius: 10px;
-        text-align: center;
-    }
-    
-    /* Responsive fixes */
-    @media (max-width: 768px) {
-        .main-header h1 {
-            font-size: 1.5em;
-        }
-        .energy-big {
-            font-size: 2em;
-        }
+        text-align: center; color: #888; padding: 20px;
+        margin-top: 30px; border-top: 1px solid #eee;
     }
 </style>
 """, unsafe_allow_html=True)
 
 # ==================== SESSION STATE INITIALIZATION ====================
-# This is critical - initialize ALL session state variables before using them
-
 if 'app_initialized' not in st.session_state:
     st.session_state.app_initialized = True
     st.session_state.current_phase = 1
@@ -201,7 +101,6 @@ ensure_temp_dir()
 
 # ==================== SIDEBAR ====================
 with st.sidebar:
-    # Emoji using markdown (not st.image)
     st.markdown(
         "<h1 style='text-align: center; font-size: 60px; margin: 0;'>💡</h1>",
         unsafe_allow_html=True
@@ -212,7 +111,6 @@ with st.sidebar:
     )
     st.markdown("---")
     
-    # IKS Wisdom Section
     st.markdown("### 📜 IKS Wisdom")
     st.info(
         "**Sūrya-saṃyoga-cikitsā**\n\n"
@@ -223,7 +121,6 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # Workflow Progress Indicators
     st.markdown("### 🔄 Workflow Progress")
     
     phases = {
@@ -243,7 +140,6 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # Current state info
     if st.session_state.selected_ligand:
         st.markdown(f"**🌿 Ligand:** {st.session_state.selected_ligand.split('(')[0].strip()}")
     if st.session_state.selected_receptor:
@@ -258,7 +154,7 @@ with st.sidebar:
     st.caption("Built with Streamlit • RDKit • ❤️")
     st.caption("© Sarang Dhote, Dept. of Chemistry")
 
-# ==================== ERROR DISPLAY (IF ANY) ====================
+# ==================== ERROR DISPLAY ====================
 if st.session_state.error_message:
     st.error(st.session_state.error_message)
     if st.button("Clear Error"):
@@ -285,7 +181,6 @@ if st.session_state.current_phase == 1:
     with col1:
         st.markdown('<p class="section-title">🌿 Natural Photosensitizer (IKS)</p>', unsafe_allow_html=True)
         
-        # Create display-friendly names
         ligand_options = list(IKS_LIGANDS.keys())
         ligand_display_names = [
             f"{l.split('(')[0].strip()} — {l.split('(')[1].replace(')','')}" 
@@ -300,14 +195,12 @@ if st.session_state.current_phase == 1:
         )
         
         if selected_display:
-            # Map display name back to full key
             idx = ligand_display_names.index(selected_display)
             ligand_name = ligand_options[idx]
             st.session_state.selected_ligand = ligand_name
             
             lig = IKS_LIGANDS[ligand_name]
             
-            # Display ligand info card
             st.markdown(f"""
             <div class="info-box">
                 <h4>🌱 <b>{lig['source_plant']}</b></h4>
@@ -318,11 +211,9 @@ if st.session_state.current_phase == 1:
             </div>
             """, unsafe_allow_html=True)
             
-            # SMILES display
             st.markdown("**🧪 SMILES Notation:**")
             st.code(lig['smiles'], language='text')
             
-            # Show molecular properties from RDKit if available
             try:
                 props = get_molecular_properties(lig['smiles'])
                 if props:
@@ -333,11 +224,11 @@ if st.session_state.current_phase == 1:
                     with prop_cols[1]:
                         st.metric("logP", f"{props.get('logP', 'N/A')}")
                     with prop_cols[2]:
-                        st.metric("H-Bond Donors", f"{props.get('h_bond_donors', 'N/A')}")
+                        st.metric("H-Donors", f"{props.get('h_bond_donors', 'N/A')}")
                     with prop_cols[3]:
-                        st.metric("H-Bond Acceptors", f"{props.get('h_bond_acceptors', 'N/A')}")
+                        st.metric("H-Acceptors", f"{props.get('h_bond_acceptors', 'N/A')}")
             except Exception:
-                pass  # RDKit computation is optional for the demo
+                pass
     
     with col2:
         st.markdown('<p class="section-title">🦠 Bacterial Target Receptor</p>', unsafe_allow_html=True)
@@ -365,8 +256,6 @@ if st.session_state.current_phase == 1:
             </div>
             """, unsafe_allow_html=True)
             
-            # Additional receptor info
-            st.markdown("**ℹ️ Why This Target?**")
             target_reasons = {
                 "DNA Gyrase (S. aureus)": "Essential for bacterial DNA replication. Target of fluoroquinolones. Plumbagin is a known natural inhibitor.",
                 "FtsZ (S. aureus)": "Key cell division protein. No human homolog — excellent selectivity potential.",
@@ -375,10 +264,9 @@ if st.session_state.current_phase == 1:
             }
             st.info(target_reasons.get(selected_receptor, "Validated antibacterial drug target."))
     
-    # Proceed button
     st.markdown("---")
-    proceed_col1, proceed_col2, proceed_col3 = st.columns([1, 2, 1])
-    with proceed_col2:
+    _, center_col, _ = st.columns([1, 2, 1])
+    with center_col:
         if st.button("🚀 Start Dark-State Docking", type="primary", use_container_width=True):
             if st.session_state.selected_ligand and st.session_state.selected_receptor:
                 st.session_state.current_phase = 2
@@ -400,14 +288,13 @@ elif st.session_state.current_phase == 2:
     col1, col2 = st.columns([3, 2])
     
     with col1:
-        # Docking button
         if not st.session_state.dark_docking_run:
             if st.button("🔬 Run Dark-State Docking Simulation", type="primary", use_container_width=True):
                 with st.spinner("🧬 Preparing ligand... Generating 3D coordinates..."):
                     time.sleep(0.5)
                 
-                # Progress simulation
-                progress_bar = st.progress(0)
+                # FIXED: Progress bar values MUST be between 0.0 and 1.0
+                progress_bar = st.progress(0.0)
                 status_text = st.empty()
                 
                 steps = [
@@ -421,12 +308,14 @@ elif st.session_state.current_phase == 2:
                     "Finalizing results..."
                 ]
                 
+                total_steps = len(steps)
                 for i, step in enumerate(steps):
                     status_text.text(f"⏳ {step}")
                     time.sleep(0.2)
-                    progress_bar.progress((i + 1) * 12.5)
+                    # FIX: Divide by total_steps to keep value between 0.0 and 1.0
+                    progress_value = (i + 1) / total_steps
+                    progress_bar.progress(progress_value)
                 
-                # Run docking
                 try:
                     result = run_simulated_docking(
                         st.session_state.selected_ligand,
@@ -442,14 +331,11 @@ elif st.session_state.current_phase == 2:
                     st.session_state.error_message = f"Docking error: {str(e)}"
                     st.rerun()
         
-        # Display results if available
         if st.session_state.dark_result and st.session_state.dark_docking_run:
             r = st.session_state.dark_result
             
-            # Success toast
             st.toast("✅ Dark-state docking complete!", icon="🌑")
             
-            # Main result card
             st.markdown(f"""
             <div class="card-dark">
                 <h3 style="text-align:center;">🌑 Dark-State Binding Affinity</h3>
@@ -461,7 +347,6 @@ elif st.session_state.current_phase == 2:
             </div>
             """, unsafe_allow_html=True)
             
-            # Binding quality indicator
             energy = r['best_energy']
             if energy <= -9:
                 st.success(f"🟢 **Strong binder** — {energy} kcal/mol indicates excellent target affinity")
@@ -470,7 +355,6 @@ elif st.session_state.current_phase == 2:
             else:
                 st.warning(f"🟠 **Weak binder** — {energy} kcal/mol may need structural optimization")
             
-            # Residue interactions
             st.markdown('<p class="section-title">🔑 Key Interacting Amino Acid Residues</p>', unsafe_allow_html=True)
             
             try:
@@ -481,7 +365,6 @@ elif st.session_state.current_phase == 2:
                 )
                 
                 for res in residues:
-                    # Color code by interaction type
                     if 'H-bond' in res['interaction'] or 'Hydrogen' in res['interaction']:
                         border_color = "#3498db"
                     elif 'π' in res['interaction'] or 'cation' in res['interaction']:
@@ -499,22 +382,20 @@ elif st.session_state.current_phase == 2:
             except Exception:
                 st.info("Residue interaction data not available for this combination.")
             
-            # All docking poses
             st.markdown('<p class="section-title">📊 All Docking Poses</p>', unsafe_allow_html=True)
-            pose_cols = st.columns(min(len(r['all_modes'][:5]), 5))
-            for i, (col, energy_val) in enumerate(zip(pose_cols, r['all_modes'][:5])):
+            poses = r['all_modes'][:5]
+            pose_cols = st.columns(len(poses))
+            for i, (col, energy_val) in enumerate(zip(pose_cols, poses)):
                 with col:
                     st.metric(f"Pose {i+1}", f"{energy_val} kcal/mol")
     
     with col2:
-        # 3D visualization placeholder
         show_placeholder_3d(
             st.session_state.selected_ligand if st.session_state.selected_ligand else "Not selected",
             st.session_state.selected_receptor if st.session_state.selected_receptor else "Not selected",
             'trans'
         )
         
-        # Quick stats
         if st.session_state.dark_result:
             st.markdown("---")
             st.markdown("### 📈 Docking Statistics")
@@ -526,19 +407,17 @@ elif st.session_state.current_phase == 2:
             - **Status:** Thermally stable (dark)
             """)
     
-    # Navigation
     if st.session_state.dark_docking_run:
         st.markdown("---")
-        nav_col1, nav_col2, nav_col3 = st.columns([1, 2, 1])
+        nav_col1, nav_col2, _ = st.columns([1, 2, 1])
         with nav_col2:
             if st.button("💡 Proceed to Photo-Isomerization Phase", type="primary", use_container_width=True):
                 st.session_state.current_phase = 3
                 st.session_state.switching_done = False
                 st.session_state.current_isomer = 'trans'
                 st.rerun()
-        
         with nav_col1:
-            if st.button("↩️ Back to Selection"):
+            if st.button("↩️ Back"):
                 st.session_state.current_phase = 1
                 st.rerun()
 
@@ -564,7 +443,6 @@ elif st.session_state.current_phase == 3:
         if wavelength:
             sw = PHOTOSWITCH_DATA[wavelength]
             
-            # Wavelength info card
             st.markdown(f"""
             <div style="background:#fff3cd; padding:20px; border-radius:10px; border:1px solid #ffc107; margin:10px 0;">
                 <h4>⚡ Photon Properties</h4>
@@ -577,7 +455,6 @@ elif st.session_state.current_phase == 3:
             </div>
             """, unsafe_allow_html=True)
             
-            # Current state display
             st.markdown(f"""
             <div style="text-align:center; margin:20px 0;">
                 <h4>Current Molecular State:</h4>
@@ -588,15 +465,12 @@ elif st.session_state.current_phase == 3:
             </div>
             """, unsafe_allow_html=True)
             
-            # Fire photons button
             if not st.session_state.switching_done:
-                fire_col1, fire_col2, fire_col3 = st.columns([1, 2, 1])
-                with fire_col2:
+                _, center_col, _ = st.columns([1, 2, 1])
+                with center_col:
                     if st.button("💥 Fire Photons! (Isomerize)", type="primary", use_container_width=True):
                         with st.spinner("⚡ Absorbing photons... Molecular rearrangement in progress..."):
                             time.sleep(1.0)
-                            
-                            # Attempt isomerization
                             new_state = isomerize(st.session_state.current_isomer, wavelength)
                             
                             if new_state != st.session_state.current_isomer:
@@ -609,26 +483,22 @@ elif st.session_state.current_phase == 3:
                                 st.warning(
                                     f"⚠️ No isomerization occurred. "
                                     f"The molecule is already in {st.session_state.current_isomer.upper()} state. "
-                                    f"Try a wavelength that drives {st.session_state.current_isomer} → {'cis' if st.session_state.current_isomer == 'trans' else 'trans'}."
+                                    f"Try a wavelength that drives {st.session_state.current_isomer} → "
+                                    f"{'cis' if st.session_state.current_isomer == 'trans' else 'trans'}."
                                 )
             
-            # Show success if switched
             if st.session_state.switching_done:
                 st.toast("⚡ Photoisomerization successful!", icon="💡")
                 st.success(f"✅ Molecule successfully switched to **{st.session_state.current_isomer.upper()}** state!")
-                
-                # Show animation
                 show_isomer_animation('trans', st.session_state.current_isomer)
     
     with col2:
-        # 3D visualization
         show_placeholder_3d(
             st.session_state.selected_ligand if st.session_state.selected_ligand else "Not selected",
             st.session_state.selected_receptor if st.session_state.selected_receptor else "Not selected",
             st.session_state.current_isomer
         )
         
-        # IKS connection
         st.markdown("---")
         st.markdown("### 📜 IKS Connection")
         st.markdown("""
@@ -639,31 +509,17 @@ elif st.session_state.current_phase == 3:
             the photon changes the molecule's shape, altering its biological activity.</p>
         </div>
         """, unsafe_allow_html=True)
-        
-        # Wavelength guide
-        st.markdown("---")
-        st.markdown("### 🎯 Wavelength Selection Guide")
-        st.markdown("""
-        | Wavelength | Effect | Best For |
-        |:-----------|:-------|:---------|
-        | UV (365nm) | trans→cis | Lab studies, fast switching |
-        | Violet (405nm) | trans→cis | Safer visible light activation |
-        | Green (530nm) | cis→trans | Reversing the switch |
-        | Red (630nm) | cis→trans | Deep tissue penetration |
-        | NIR (750nm) | cis→trans | Maximum tissue depth |
-        """)
     
-    # Navigation
     if st.session_state.switching_done:
         st.markdown("---")
-        nav_col1, nav_col2, nav_col3 = st.columns([1, 2, 1])
+        nav_col1, nav_col2, _ = st.columns([1, 2, 1])
         with nav_col2:
             if st.button("🔬 Run Light-State Docking", type="primary", use_container_width=True):
                 st.session_state.current_phase = 4
                 st.session_state.light_docking_run = False
                 st.rerun()
         with nav_col1:
-            if st.button("↩️ Back to Dark Docking"):
+            if st.button("↩️ Back"):
                 st.session_state.current_phase = 2
                 st.rerun()
 
@@ -674,7 +530,6 @@ elif st.session_state.current_phase == 4:
     col1, col2 = st.columns([3, 2])
     
     with col1:
-        # Run light docking
         if not st.session_state.light_docking_run:
             if st.button("🔬 Run Light-State Docking", type="primary", use_container_width=True):
                 with st.spinner("🧬 Docking the photoswitched isomer..."):
@@ -693,7 +548,6 @@ elif st.session_state.current_phase == 4:
                     st.session_state.error_message = f"Light docking error: {str(e)}"
                     st.rerun()
         
-        # Show comparison results
         if st.session_state.light_result and st.session_state.dark_result:
             st.toast("✅ Light-state docking complete!", icon="☀️")
             
@@ -702,7 +556,6 @@ elif st.session_state.current_phase == 4:
             delta = dark - light
             fold = calculate_selectivity(dark, light)
             
-            # Side-by-side comparison
             comp_col1, comp_col2 = st.columns(2)
             with comp_col1:
                 st.markdown(f"""
@@ -726,29 +579,24 @@ elif st.session_state.current_phase == 4:
                 </div>
                 """, unsafe_allow_html=True)
             
-            # Delta and selectivity
             st.markdown("---")
             
             if delta > 3:
                 verdict_color = "#27ae60"
                 verdict_text = "✅ EXCELLENT Photoswitch!"
-                verdict_detail = "Strong differentiation between dark and light states."
                 recommendation = "This is a promising photoantibiotic candidate. Consider experimental validation."
             elif delta > 1.5:
                 verdict_color = "#f39c12"
                 verdict_text = "⚠️ MODERATE Photoswitch"
-                verdict_detail = "Detectable difference — may work with optimization."
                 recommendation = "Consider modifying the azo bridge substituents for improved switching."
             else:
                 verdict_color = "#c0392b"
                 verdict_text = "❌ POOR Photoswitch"
-                verdict_detail = "Minimal difference between dark and light states."
                 recommendation = "Try a different ligand-receptor pair or redesign the azo insertion point."
             
             st.markdown(f"""
             <div style="background:{verdict_color}; padding:25px; border-radius:15px; color:white; text-align:center; margin:20px 0;">
                 <h2>{verdict_text}</h2>
-                <p style="font-size:1.2em;">{verdict_detail}</p>
                 <div style="background:rgba(255,255,255,0.2); padding:15px; border-radius:10px; margin:15px 0;">
                     <h3>ΔΔG = {delta:.1f} kcal/mol</h3>
                     <p>Predicted MIC Selectivity: <b>~{fold}-fold</b></p>
@@ -757,11 +605,9 @@ elif st.session_state.current_phase == 4:
             </div>
             """, unsafe_allow_html=True)
             
-            # Residue comparison
             st.markdown('<p class="section-title">🔑 Residue Interaction Comparison</p>', unsafe_allow_html=True)
             
             res_col1, res_col2 = st.columns(2)
-            
             with res_col1:
                 st.markdown("**🌑 Dark State (Trans):**")
                 try:
@@ -797,14 +643,12 @@ elif st.session_state.current_phase == 4:
                     st.info("Data not available")
     
     with col2:
-        # 3D visualization
         show_placeholder_3d(
             st.session_state.selected_ligand if st.session_state.selected_ligand else "Not selected",
             st.session_state.selected_receptor if st.session_state.selected_receptor else "Not selected",
             st.session_state.current_isomer
         )
         
-        # IKS Therapeutic Prediction
         if st.session_state.light_result:
             st.markdown("---")
             st.markdown("### 📜 IKS Therapeutic Summary")
@@ -825,29 +669,16 @@ elif st.session_state.current_phase == 4:
                 <p><b>🎯 Principle:</b> Sūrya-saṃyoga-cikitsā reimagined through photopharmacology</p>
             </div>
             """, unsafe_allow_html=True)
-            
-            # Key takeaways
-            st.markdown("---")
-            st.markdown("### 📌 Key Takeaways")
-            st.markdown(f"""
-            - **Dark State Binding:** {st.session_state.dark_result['best_energy']} kcal/mol
-            - **Light State Binding:** {st.session_state.light_result['best_energy']} kcal/mol  
-            - **Selectivity Factor:** ~{fold}-fold
-            - **Clinical Potential:** {'High' if delta > 3 else 'Moderate' if delta > 1.5 else 'Needs Optimization'}
-            """)
     
-    # Navigation
     if st.session_state.light_docking_run:
         st.markdown("---")
+        nav_col1, nav_col2, nav_col3 = st.columns([1, 1, 1])
         
-        nav_col1, nav_col2, nav_col3, nav_col4 = st.columns([1, 1, 1, 1])
         with nav_col1:
             if st.button("🔄 New Session", use_container_width=True):
-                # Reset everything
                 for key in list(st.session_state.keys()):
                     if key != 'app_initialized':
                         del st.session_state[key]
-                st.session_state.app_initialized = True
                 st.session_state.current_phase = 1
                 st.session_state.selected_ligand = None
                 st.session_state.selected_receptor = None
@@ -860,12 +691,8 @@ elif st.session_state.current_phase == 4:
                 st.session_state.error_message = None
                 st.rerun()
         
-        with nav_col4:
-            if st.button("📊 Export Results", use_container_width=True):
-                # Create download data
-                import pandas as pd
-                from io import StringIO
-                
+        with nav_col3:
+            if st.session_state.light_result and st.session_state.dark_result:
                 data = {
                     "Parameter": [
                         "Ligand", "Receptor", "Dark Binding (kcal/mol)",
@@ -878,7 +705,10 @@ elif st.session_state.current_phase == 4:
                         st.session_state.dark_result['best_energy'],
                         st.session_state.light_result['best_energy'],
                         round(st.session_state.dark_result['best_energy'] - st.session_state.light_result['best_energy'], 1),
-                        fold,
+                        calculate_selectivity(
+                            st.session_state.dark_result['best_energy'],
+                            st.session_state.light_result['best_energy']
+                        ),
                         st.session_state.current_isomer.upper()
                     ]
                 }
@@ -908,5 +738,3 @@ st.markdown("""
     </p>
 </div>
 """, unsafe_allow_html=True)
-
-# ==================== END OF APPLICATION ====================

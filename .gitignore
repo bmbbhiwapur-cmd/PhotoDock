@@ -1,0 +1,6 @@
+temp/
+*.pyc
+__pycache__/
+.vscode/
+*.pdbqt
+*.pdb

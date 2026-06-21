@@ -344,45 +344,6 @@ def convert_smiles_to_pdbqt(smiles_string, output_filename="ligand.pdbqt"):
         return ok, output_filename
     except Exception as e: return False, str(e)
 
-def execute_uff_complex_minimization(protein_path, ligand_pose_str, progress_ui=None):
-    try:
-        protein_mol = Chem.MolFromPDBFile(protein_path, sanitize=False, removeHs=False)
-        ligand_mol = Chem.MolFromPDBBlock(ligand_pose_str, sanitize=False, removeHs=False)
-        if not protein_mol or not ligand_mol: return "N/A", "N/A", "N/A"
-        total_atoms = protein_mol.GetNumAtoms() + ligand_mol.GetNumAtoms()
-        MAX_SAFE_ATOMS = 4000 
-        if total_atoms > MAX_SAFE_ATOMS:
-            if progress_ui: progress_ui.warning(f"⚠️ UFF Skipped: Complex too massive ({total_atoms} atoms).")
-            time.sleep(1.5) 
-            return "Bypassed", "Bypassed", "N/A"
-        combined_complex = Chem.CombineMols(protein_mol, ligand_mol)
-        try: Chem.SanitizeMol(combined_complex, Chem.SanitizeFlags.SANITIZE_ALL ^ Chem.SanitizeFlags.SANITIZE_PROPERTIES)
-        except Exception: pass
-        uff_field = AllChem.UFFGetMoleculeForceField(combined_complex)
-        if not uff_field: return "N/A", "N/A", "N/A"
-        pre_energy = uff_field.CalcEnergy()
-        max_iter = 150
-        chunk_size = 15
-        if progress_ui: prog_bar = progress_ui.progress(0, text="⏳ Initializing UFF Force Field Physics Matrix...")
-        res = 1
-        for i in range(0, max_iter, chunk_size):
-            res = uff_field.Minimize(maxIts=chunk_size, forceTol=1e-3)
-            pct = min(100, int(((i + chunk_size) / max_iter) * 100))
-            if progress_ui: prog_bar.progress(pct, text=f"🧬 Relaxing Complex Sterics... ({pct}% complete)")
-            time.sleep(0.01) 
-            if res == 0:
-                if progress_ui: prog_bar.progress(100, text="✨ Steric Relaxation Converged Perfectly!")
-                break
-        if res != 0 and progress_ui: prog_bar.progress(100, text="✨ Steric Relaxation Completed.")
-        post_energy = uff_field.CalcEnergy()
-        delta_energy = post_energy - pre_energy
-        time.sleep(0.4)
-        return f"{pre_energy:.2f}", f"{post_energy:.2f}", f"{delta_energy:.2f}"
-    except MemoryError:
-        if progress_ui: progress_ui.error("🚨 Out of Memory Error during UFF calculation. Bypassing.")
-        return "OOM Crash", "OOM Crash", "N/A"
-    except Exception: return "N/A", "N/A", "N/A"
-
 def split_docking_poses(poses_file_path):
     poses = {}
     if not os.path.exists(poses_file_path): return poses
@@ -422,8 +383,8 @@ def parse_vina_output_with_residues(stdout_text):
     return pd.DataFrame(data)
 
 def build_styled_html_table(df):
-    html = '<table class="data-table"><thead><tr>'
-    for col in df.columns: html += f'<th>{col}</th>'
+    html = '<table class="data-table" border="1" cellpadding="5" style="border-collapse: collapse; width:100%; text-align:left;"><thead><tr>'
+    for col in df.columns: html += f'<th style="background-color:#f2f2f2;">{col}</th>'
     html += '</tr></thead><tbody>'
     for _, row in df.iterrows():
         html += '<tr>'
@@ -974,3 +935,87 @@ if st.session_state.docking_results_raw is not None:
         with col_table: st.dataframe(df_results_global, hide_index=True, use_container_width=True)
         with col_export:
             st.download_button("📥 Download Data Sheet (.CSV)", data=df_results_global.to_csv(index=False).encode('utf-8'), file_name="photo_dock_report.csv", mime="text/csv", use_container_width=True)
+            
+            # Added HTML Report Generation for Standard Run
+            html_table = build_styled_html_table(df_results_global)
+            standard_html_report = f"<html><head><title>Docking Report</title></head><body style='font-family: sans-serif; padding: 20px;'><h2>🔬 InSilico BioSphere Docking Report</h2><p><b>Target:</b> {st.session_state.protein_name}</p>{html_table}</body></html>"
+            st.download_button("🔥 Download HTML Report", data=standard_html_report, file_name="docking_report.html", mime="text/html", use_container_width=True)
+
+# --- ADVANCED COMPARATIVE DOCKING & STATEMENT (ADDED WITHOUT CHANGING EXISTING CODE) ---
+if st.session_state.get("has_isomers", False):
+    st.write("---")
+    st.header("⚡ 6. Comparative Photo-Docking (Trans vs Cis)")
+    st.markdown("Run AutoDock Vina simultaneously on both isomers to calculate the ΔΔG structural penalty and generate a comparative statement.")
+    
+    if st.button("🔄 Run Trans vs Cis Comparative Docking", type="primary"):
+        progress_bar_comp = st.progress(0, text="Docking Trans Isomer...")
+        cmd_trans = ["./vina", "--receptor", "protein.pdbqt", "--ligand", "ligand_trans.pdbqt", "--center_x", str(grid_cx), "--center_y", str(grid_cy), "--center_z", str(grid_cz), "--size_x", str(grid_sx), "--size_y", str(grid_sy), "--size_z", str(grid_sz), "--exhaustiveness", str(exhaustiveness), "--out", "docking_trans.pdbqt"]
+        t_proc = subprocess.run(cmd_trans, capture_output=True, text=True)
+        
+        progress_bar_comp.progress(50, text="Docking Cis Isomer...")
+        cmd_cis = ["./vina", "--receptor", "protein.pdbqt", "--ligand", "ligand_cis.pdbqt", "--center_x", str(grid_cx), "--center_y", str(grid_cy), "--center_z", str(grid_cz), "--size_x", str(grid_sx), "--size_y", str(grid_sy), "--size_z", str(grid_sz), "--exhaustiveness", str(exhaustiveness), "--out", "docking_cis.pdbqt"]
+        c_proc = subprocess.run(cmd_cis, capture_output=True, text=True)
+        
+        progress_bar_comp.progress(100, text="Comparative Docking Complete!")
+        st.session_state.raw_trans_log = t_proc.stdout
+        st.session_state.raw_cis_log = c_proc.stdout
+        st.session_state.comparative_run_complete = True
+        time.sleep(1)
+        st.rerun()
+
+if st.session_state.get("comparative_run_complete", False):
+    def get_top_affinity(stdout_text):
+        for line in stdout_text.split("\n"):
+            m = re.match(r"^\s*1\s+([-+]?\d+\.\d+)", line)
+            if m: return float(m.group(1))
+        return 0.0
+        
+    t_aff = get_top_affinity(st.session_state.raw_trans_log)
+    c_aff = get_top_affinity(st.session_state.raw_cis_log)
+    delta_g_switch = round(c_aff - t_aff, 2)
+    
+    if delta_g_switch > 1.5:
+        verdict = f"**Successful Switch Effect:** The massive shape change caused a **+{delta_g_switch} kcal/mol** penalty in binding energy (loss of affinity vs trans). Light exposure successfully turns this drug 'OFF'."
+        box_c, border_c = "#e8f5e9", "#2e7d32"
+    elif delta_g_switch < -1.5:
+        verdict = f"**Reverse Switch Effect:** The Cis isomer binds significantly better (**{delta_g_switch} kcal/mol** shift). Light exposure will turn this drug 'ON'."
+        box_c, border_c = "#e3f2fd", "#1565c0"
+    else:
+        verdict = f"**Ineffective Switch:** Both isomers bind with similar affinity (ΔΔG: **{delta_g_switch} kcal/mol**). The pocket is too large or flexible to block the bent isomer."
+        box_c, border_c = "#fff3e0", "#ef6c00"
+
+    st.markdown(f"""
+    <div style="background-color:{box_c}; border-left:6px solid {border_c}; padding:16px; border-radius:8px;">
+        <h4 style="margin-top:0;">Comparative Binding Statement (ΔΔG)</h4>
+        <p style="font-size:14px; margin-bottom:5px;"><b>Trans (Active):</b> {t_aff} kcal/mol</p>
+        <p style="font-size:14px; margin-bottom:10px;"><b>Cis (Inactive):</b> {c_aff} kcal/mol</p>
+        <p style="font-size:14px; line-height:1.4;">{verdict}</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    comp_html_report = f"""<!DOCTYPE html>
+    <html>
+    <head><title>PhotoDock Comparative Report</title></head>
+    <body style="font-family: sans-serif; padding: 20px; background-color: #fcfcfc;">
+        <h2 style="color: #2e7d32;">🔬 PhotoDock Comparative Analysis Report</h2>
+        <p><b>Target Protein:</b> {st.session_state.protein_name}</p>
+        <p><b>Base Azo-Scaffold:</b> {st.session_state.get('mutated_azo_smiles', 'N/A')}</p>
+        <hr>
+        <div style="background-color:{box_c}; border-left:6px solid {border_c}; padding:16px; border-radius:8px;">
+            <h3>Comparative Statement (ΔΔG)</h3>
+            <p><b>Trans Isomer Affinity (Dark State):</b> {t_aff} kcal/mol</p>
+            <p><b>Cis Isomer Affinity (Light State):</b> {c_aff} kcal/mol</p>
+            <p><b>Delta G Shift:</b> {delta_g_switch} kcal/mol</p>
+            <p><b>Verdict:</b> {verdict.replace('**', '')}</p>
+        </div>
+    </body>
+    </html>"""
+    
+    st.download_button(
+        label="🔥 Download Comparative HTML Report",
+        data=comp_html_report,
+        file_name="PhotoDock_Comparative_Report.html",
+        mime="text/html",
+        use_container_width=True,
+        type="primary"
+    )

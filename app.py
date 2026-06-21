@@ -12,7 +12,7 @@ import streamlit.components.v1 as components
 from rdkit import Chem
 from rdkit.Chem import AllChem, Draw
 import base64
-from io import BytesIsO
+from io import BytesIO
 
 # --- CLOUD CONTEXT ENGINE MANAGEMENT ---
 def ensure_linux_vina_exists():

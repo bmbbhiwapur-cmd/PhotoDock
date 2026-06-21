@@ -13,7 +13,6 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 
 # --- CLOUD CONTEXT ENGINE MANAGEMENT ---
-
 def ensure_linux_vina_exists():
     binary_name = "./vina"
     if not os.path.exists(binary_name):
@@ -29,7 +28,6 @@ def ensure_linux_vina_exists():
 ensure_linux_vina_exists()
 
 # --- PHASE 3: SURYA-SANYOG AZOLOGIZATION ENGINE ---
-
 class Azologizer:
     def __init__(self):
         # SMARTS pattern to find C=C bridge between two aromatic rings and mutate to N=N
@@ -39,10 +37,8 @@ class Azologizer:
     def mutate_ligand(self, native_smiles):
         native_mol = Chem.MolFromSmiles(native_smiles)
         if not native_mol: return None
-        
         products = self.rxn.RunReactants((native_mol,))
         if not products: return None
-        
         azo_mol = products[0][0]
         Chem.SanitizeMol(azo_mol)
         return Chem.MolToSmiles(azo_mol)
@@ -80,12 +76,9 @@ class Azologizer:
         Chem.MolToPDBFile(mol_3d, temp_pdb)
         ok, msg = convert_pdb_to_pdbqt(temp_pdb, output_filename, is_ligand=True)
         if os.path.exists(temp_pdb): os.remove(temp_pdb)
-        
         return ok, output_filename
 
-
 # --- PUBCHEM AUTOMATED DATA CONVERTER ---
-
 def fetch_ligand_data_from_pubchem(smiles_string):
     metadata = {"name": "Unknown Compound Name", "mw": "N/A", "formula": "N/A"}
     try:
@@ -103,8 +96,7 @@ def fetch_ligand_data_from_pubchem(smiles_string):
         pass 
     return metadata
 
-# --- PDB METADATA, HETATM CO-CRYSTAL & CAVITY PARSER ---
-# (Keeping original parser logic exactly as you had it)
+# --- BIOINFORMATICS PARSERS & CONVERTERS ---
 def extract_pdb_metadata(file_path, pdb_id="Custom"):
     meta = {"name": "Unknown Protein", "title": "Uploaded Protein Structure Matrix", "id": pdb_id.upper() if pdb_id and pdb_id != "Uploaded File" else "Unknown", "class": "Unknown Classification", "organism": "Unknown", "system": "Unknown Expression System", "method": "X-RAY DIFFRACTION", "res": "N/A"}
     if not os.path.exists(file_path): return meta
@@ -422,6 +414,33 @@ def build_styled_html_table(df):
     html += '</tbody></table>'
     return html
 
+# --- VISUALIZATION CONSTRUCTS ---
+def render_isomer_comparison(trans_data, cis_data):
+    """Generates a side-by-side 3Dmol.js viewer to visually compare Cis and Trans geometries."""
+    html_content = f"""
+    <div style="display: flex; width: 100%; justify-content: space-between; gap: 10px;">
+        <div id="trans_view" style="width: 50%; height: 350px; border:2px solid #2e7d32; border-radius:8px; position:relative; background:#ffffff;">
+            <div style="position:absolute; top:8px; left:8px; z-index:10; font-weight:bold; color:#2e7d32; background:rgba(255,255,255,0.9); padding:4px 8px; border-radius:4px; border:1px solid #2e7d32;">Trans Isomer (Straight / Active)</div>
+        </div>
+        <div id="cis_view" style="width: 50%; height: 350px; border:2px solid #c62828; border-radius:8px; position:relative; background:#ffffff;">
+            <div style="position:absolute; top:8px; left:8px; z-index:10; font-weight:bold; color:#c62828; background:rgba(255,255,255,0.9); padding:4px 8px; border-radius:4px; border:1px solid #c62828;">Cis Isomer (Bent / Inactive)</div>
+        </div>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/3Dmol/2.0.4/3Dmol-min.js"></script>
+    <script>
+        let v_trans = $3Dmol.createViewer(document.getElementById('trans_view'), {{backgroundColor: '#f8fbf8'}});
+        v_trans.addModel(`{trans_data}`, 'pdb');
+        v_trans.setStyle({{}}, {{stick: {{colorscheme: 'greenCarbon', radius: 0.2}}, sphere: {{radius:0.4}}}});
+        v_trans.zoomTo(); v_trans.render();
+
+        let v_cis = $3Dmol.createViewer(document.getElementById('cis_view'), {{backgroundColor: '#fff8f8'}});
+        v_cis.addModel(`{cis_data}`, 'pdb');
+        v_cis.setStyle({{}}, {{stick: {{colorscheme: 'orangeCarbon', radius: 0.2}}, sphere: {{radius:0.4}}}});
+        v_cis.zoomTo(); v_cis.render();
+    </script>
+    """
+    components.html(html_content, height=370)
+
 def render_advanced_modeling_blueprint(receptor_data, ligand_data, mode="cartoon", show_surface=False, interactions_list=[]):
     surface_js = "viewer.addSurface($3Dmol.SurfaceType.VDW, {opacity:0.45, colorscheme:{prop:'b',gradient:'rwb'}}, {model:0});" if show_surface else ""
     int_lines_js = ""
@@ -507,7 +526,7 @@ if st.button("🔄 Reset Entire Environment", type="secondary"):
 col_params, col_visual = st.columns([1, 1])
 
 with col_params:
-    st.header("1. Target Protein Setup")
+    st.header("1. Target Protein Setup (Cancer & Diabetes Receptors)")
     
     current_p_name = st.text_input("Protein Name", placeholder="Hint: Type protein name here...", value=st.session_state.protein_name)
     current_p_id = st.text_input("PDB ID / Code", placeholder="Hint: Type PDB ID here...", value=st.session_state.pdb_id_display)
@@ -515,10 +534,26 @@ with col_params:
     if current_p_name != st.session_state.protein_name: st.session_state.protein_name = current_p_name
     if current_p_id != st.session_state.pdb_id_display: st.session_state.pdb_id_display = current_p_id
 
-    protein_source = st.radio("Choose Protein Input Method:", ["Type 4-Letter PDB ID", "Upload File (.pdb or .pdbqt)"])
+    # Curated Cancer/Diabetes Receptor Library
+    cancer_receptors = {
+        "EGFR Kinase Domain (Lung/Breast Cancer)": "1M17",
+        "Estrogen Receptor Alpha (Breast Cancer)": "3ERT",
+        "BRAF V600E Mutant (Melanoma)": "4HJO",
+        "Abl Tyrosine Kinase (Leukemia)": "1T46",
+        "GLUT4 Glucose Transporter (Diabetes)": "7WSM"
+    }
+
+    protein_source = st.radio("Choose Protein Input Method:", ["Select Curated Target Receptor", "Type 4-Letter PDB ID", "Upload File (.pdb or .pdbqt)"])
     
-    if protein_source == "Type 4-Letter PDB ID":
+    pdb_id_input = ""
+    if protein_source == "Select Curated Target Receptor":
+        selected_receptor = st.selectbox("Select Target Receptor:", list(cancer_receptors.keys()))
+        pdb_id_input = cancer_receptors[selected_receptor]
+        st.info(f"Targeting PDB ID: `{pdb_id_input}`")
+    elif protein_source == "Type 4-Letter PDB ID":
         pdb_id_input = st.text_input("Enter RCSB PDB ID", value="2AMB").strip()
+
+    if protein_source in ["Select Curated Target Receptor", "Type 4-Letter PDB ID"]:
         if st.button("📥 Load Target Structure"):
             if pdb_id_input:
                 success, path = fetch_pdb_from_rcsb(pdb_id_input)
@@ -581,7 +616,6 @@ with col_params:
     st.write("---")
     st.header("2. Phase 1: Small Molecule Phytochemical Setup")
     
-    # Predefined IKS Library Map
     iks_library = {
         "Pterostilbene (Antidiabetic / Anticancer)": "COc1cc(C=Cc2ccc(O)cc2)cc(OC)c1",
         "Resveratrol (Antidiabetic / Anticancer)": "Oc1cc(O)cc(C=Cc2ccc(O)cc2)c1",
@@ -678,7 +712,7 @@ with col_params:
     if st.session_state.ligand_ready and st.session_state.smiles_cache:
         st.write("---")
         st.subheader("💡 Phase 3: Surya-Sanyog Azologization")
-        st.markdown("Detect natural `C=C` stilbene bridges in the selected tribal scaffold and computationally mutate them into light-activated `N=N` (azo) switches.")
+        st.markdown("Detect natural `C=C` stilbene bridges and computationally mutate them into light-activated `N=N` (azo) switches.")
         
         if st.button("🧬 Run In Silico Azologization", type="primary"):
             with st.spinner("Executing virtual synthesis and generating 3D Isomers..."):
@@ -687,43 +721,44 @@ with col_params:
                 
                 if mutated_smiles:
                     st.success(f"Mutation Successful! New Azo-Scaffold: `{mutated_smiles}`")
-                    
-                    # Generate Trans Isomer (Dark/Active)
                     trans_ok, trans_file = engine.generate_3d_isomer_pdbqt(mutated_smiles, "trans", "ligand_trans.pdbqt")
-                    # Generate Cis Isomer (Light/Inactive)
                     cis_ok, cis_file = engine.generate_3d_isomer_pdbqt(mutated_smiles, "cis", "ligand_cis.pdbqt")
                     
                     if trans_ok and cis_ok:
                         st.session_state.has_isomers = True
-                        st.info("Successfully folded Trans and Cis 3D geometries for comparative docking.")
-                        
-                        # Set Trans as default active ligand for docking
+                        st.info("Successfully folded Trans and Cis 3D geometries.")
                         if os.path.exists("ligand_trans.pdbqt"):
                             shutil.copy("ligand_trans.pdbqt", "ligand.pdbqt")
                             with open("ligand.pdbqt", "r") as f:
                                 st.session_state.serialized_ligand_block = f.read()
                             st.session_state.ligand_summary_text += "\n\n**Currently Loaded:** Trans-Azo Isomer (Dark State)"
-                            time.sleep(1)
-                            st.rerun()
                     else:
                         st.error("Failed to map constrained 3D coordinates for the isomers.")
                 else:
-                    st.warning("No valid C=C bridge found in this molecule for azologization. Ensure you selected a stilbene like Resveratrol or Pterostilbene.")
+                    st.warning("No valid C=C bridge found. Ensure you selected a stilbene like Resveratrol or Pterostilbene.")
                     
-    # Isomer Selector Panel
+    # --- ISOMER COMPARISON & SELECTOR PANEL ---
     if st.session_state.get("has_isomers", False):
-        st.markdown("**Switch Target Geometry:**")
-        selected_isomer = st.radio("Select Active Isomer for Docking Grid:", ["Trans (Dark State)", "Cis (Light State)"], horizontal=True)
+        st.markdown("### 🔬 Structural Geometric Comparison")
+        st.markdown("Observe the massive geometric shift. The *Trans* isomer remains straight to mimic the native drug, while UV/Visible light snaps the *Cis* isomer into a bent shape, breaking receptor affinity.")
+        
+        with open("ligand_trans.pdbqt", "r") as f: t_data = f.read()
+        with open("ligand_cis.pdbqt", "r") as f: c_data = f.read()
+        
+        render_isomer_comparison(t_data, c_data)
+        
+        st.markdown("**Switch Target Geometry for Docking:**")
+        selected_isomer = st.radio("Select Active Isomer to inject into the Receptor Grid:", ["Trans (Dark State / Active)", "Cis (Light State / Inactive)"], horizontal=True)
         
         if st.button("🔄 Apply Isomer to 3D Canvas"):
-            if selected_isomer == "Trans (Dark State)" and os.path.exists("ligand_trans.pdbqt"):
+            if "Trans" in selected_isomer and os.path.exists("ligand_trans.pdbqt"):
                 shutil.copy("ligand_trans.pdbqt", "ligand.pdbqt")
-            elif selected_isomer == "Cis (Light State)" and os.path.exists("ligand_cis.pdbqt"):
+            elif "Cis" in selected_isomer and os.path.exists("ligand_cis.pdbqt"):
                 shutil.copy("ligand_cis.pdbqt", "ligand.pdbqt")
                 
             with open("ligand.pdbqt", "r") as f: 
                 st.session_state.serialized_ligand_block = f.read()
-            st.success(f"Loaded {selected_isomer} into the active docking engine.")
+            st.success(f"Loaded {selected_isomer.split('(')[0].strip()} into the active docking engine.")
             time.sleep(0.5)
             st.rerun()
 

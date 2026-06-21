@@ -146,6 +146,35 @@ def discover_and_list_all_heteroatoms(file_path):
                 hetero_counts[res_name] = hetero_counts.get(res_name, 0) + 1
     return hetero_counts
 
+def parse_bound_ligands(file_path):
+    ligands = {}
+    if not os.path.exists(file_path): return ligands
+    with open(file_path, "r") as f:
+        for line in f:
+            if line.startswith("HETATM"):
+                res_name = line[17:20].strip()
+                chain_id = line[21].strip() if line[21].strip() else "A"
+                try: res_seq = int(line[22:26].strip())
+                except ValueError: continue
+                if res_name in ["HOH", "WAT", "DOD"]: continue
+                key = f"{res_name}-{chain_id}-{res_seq}"
+                try:
+                    x, y, z = float(line[30:38].strip()), float(line[38:46].strip()), float(line[46:54].strip())
+                except ValueError: continue
+                if key not in ligands: ligands[key] = {"res": res_name, "chain": chain_id, "seq": res_seq, "coords": []}
+                ligands[key]["coords"].append((x, y, z))
+    processed_ligands = []
+    for key, info in ligands.items():
+        pts = info["coords"]
+        n_atoms = len(pts)
+        if n_atoms < 4: continue
+        cx, cy, cz = sum([p[0] for p in pts])/n_atoms, sum([p[1] for p in pts])/n_atoms, sum([p[2] for p in pts])/n_atoms
+        bx = max([p[0] for p in pts]) - min([p[0] for p in pts]) + 10.0
+        by = max([p[1] for p in pts]) - min([p[1] for p in pts]) + 10.0
+        bz = max([p[2] for p in pts]) - min([p[2] for p in pts]) + 10.0
+        processed_ligands.append({"ID": info["res"], "Chain": info["chain"], "ResSeq": info["seq"], "Atoms": n_atoms, "cx": round(cx, 2), "cy": round(cy, 2), "cz": round(cz, 2), "bx": round(bx, 1), "by": round(by, 1), "bz": round(bz, 1)})
+    return processed_ligands
+
 def identify_protein_cavities(pdbqt_file, max_pockets=5):
     coords = []
     if not os.path.exists(pdbqt_file): return []
@@ -365,6 +394,46 @@ def get_top_affinity_from_pdbqt(file_path):
                 return float(line.split()[3])
     return 0.0
 
+def parse_vina_output_with_residues(stdout_text):
+    data = []
+    poses_dict = split_docking_poses("docking_poses.pdbqt")
+    if not stdout_text: return pd.DataFrame(data)
+    for line in stdout_text.split("\n"):
+        parts = line.split()
+        if len(parts) >= 4 and parts[0].isdigit():
+            try:
+                mode_idx = int(parts[0])
+                aff = float(parts[1])
+                rmsd_lb = float(parts[2])
+                rmsd_ub = float(parts[3])
+                res_string, bond_types = "N/A", "N/A"
+                if mode_idx in poses_dict:
+                    ints = compute_spatial_interactions("protein.pdbqt", poses_dict[mode_idx])
+                    if ints:
+                        res_string = ", ".join(list(set([i["Residue Contact"] for i in ints])))
+                        bond_types = ", ".join(list(set([i["Interaction Type"] for i in ints])))
+                data.append({"Binding Mode": mode_idx, "Affinity (kcal/mol)": aff, "RMSD l.b.": rmsd_lb, "RMSD u.b.": rmsd_ub, "Interacting Residues": res_string, "Contact Bond Types": bond_types})
+            except ValueError: continue
+    return pd.DataFrame(data)
+
+def build_styled_html_table(df):
+    html = '<table class="data-table" border="1" cellpadding="5" style="border-collapse: collapse; width:100%; text-align:left;"><thead><tr>'
+    for col in df.columns: html += f'<th style="background-color:#f2f2f2; color:#111;">{col}</th>'
+    html += '</tr></thead><tbody>'
+    for _, row in df.iterrows():
+        html += '<tr>'
+        for col in df.columns:
+            val = row[col]
+            if col == 'Affinity (kcal/mol)':
+                try:
+                    if float(val) > 0: html += f'<td style="color: #c62828; font-weight: bold;">{val}</td>'
+                    else: html += f'<td style="color: #1b5e20; font-weight: bold;">{val}</td>'
+                except: html += f'<td style="color:#111;">{val}</td>'
+            else: html += f'<td style="color:#111;">{val}</td>'
+        html += '</tr>'
+    html += '</tbody></table>'
+    return html
+
 # --- VISUALIZATION CONSTRUCTS ---
 def render_photopharmacology_tutorial():
     """Renders a custom HTML/JS interactive animation to explain the Cis/Trans shape shifting."""
@@ -576,6 +645,12 @@ if "smiles_cache" not in st.session_state: st.session_state.smiles_cache = ""
 if "mutated_azo_smiles" not in st.session_state: st.session_state.mutated_azo_smiles = ""
 if "comparative_run_complete" not in st.session_state: st.session_state.comparative_run_complete = False
 if "uff_cache" not in st.session_state: st.session_state.uff_cache = {}
+if "detected_pockets" not in st.session_state: st.session_state.detected_pockets = []
+if "active_retained_ions" not in st.session_state: st.session_state.active_retained_ions = "None"
+if "last_uploaded_protein" not in st.session_state: st.session_state.last_uploaded_protein = ""
+if "last_uploaded_ligand" not in st.session_state: st.session_state.last_uploaded_ligand = "" 
+if "selected_native_ligand" not in st.session_state: st.session_state.selected_native_ligand = "None"
+if "ligand_summary_text" not in st.session_state: st.session_state.ligand_summary_text = ""
 
 # Ensure Action Scopes
 run_single_btn = False
@@ -632,6 +707,7 @@ with col_params:
                     st.session_state.protein_name = meta["name"]
                     conv_ok, _ = convert_pdb_to_pdbqt(path, "protein.pdbqt", allowed_heteroatoms=[])
                     st.session_state.target_ready = conv_ok
+                    st.session_state.active_retained_ions = "None (Fully Stripped)"
                     st.success(f"Protein {pdb_id_input.upper()} successfully loaded!")
                     st.rerun()
                 else: st.error(path)
@@ -842,6 +918,9 @@ elif run_comp_btn and can_dock:
 # --- RIGHT COLUMN UI RENDERING ---
 with col_visual:
     st.header("6. Active Viewport Canvas")
+    
+    if not st.session_state.target_ready and not st.session_state.ligand_ready:
+        render_photopharmacology_tutorial()
     
     if st.session_state.docking_results_raw is None and not st.session_state.get("comparative_run_complete", False):
         if st.session_state.get("has_isomers", False):

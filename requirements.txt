@@ -1,7 +1,7 @@
-streamlit
-rdkit
-py3Dmol
-stmol
-pandas
-numpy
-biopython
+streamlit>=1.28
+rdkit>=2023.03
+py3Dmol>=2.0.0
+stmol>=0.0.9
+pandas>=2.0
+numpy>=1.24
+biopython>=1.81

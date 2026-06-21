@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import streamlit.components.v1 as components
 from rdkit import Chem
-from rdkit.Chem import AllChem
+from rdkit.Chem import AllChem, Draw
 
 # --- CLOUD CONTEXT ENGINE MANAGEMENT ---
 def ensure_linux_vina_exists():
@@ -43,6 +43,30 @@ class Azologizer:
         Chem.SanitizeMol(azo_mol)
         return Chem.MolToSmiles(azo_mol)
 
+    def get_2d_isomer_image(self, azo_smiles, isomer_type="trans"):
+        """Generates a strict 2D representation of the Cis or Trans isomer."""
+        mol = Chem.MolFromSmiles(azo_smiles)
+        azo_bond = None
+        for bond in mol.GetBonds():
+            if bond.GetBondType() == Chem.rdchem.BondType.DOUBLE:
+                if bond.GetBeginAtom().GetAtomicNum() == 7 and bond.GetEndAtom().GetAtomicNum() == 7:
+                    azo_bond = bond
+                    break
+        if azo_bond:
+            if isomer_type.lower() == "trans":
+                azo_bond.SetStereo(Chem.rdchem.BondStereo.STEREOE)
+            elif isomer_type.lower() == "cis":
+                azo_bond.SetStereo(Chem.rdchem.BondStereo.STEREOZ)
+            
+            try:
+                b_idx = [a.GetIdx() for a in azo_bond.GetBeginAtom().GetNeighbors() if a.GetIdx() != azo_bond.GetEndAtomIdx()][0]
+                e_idx = [a.GetIdx() for a in azo_bond.GetEndAtom().GetNeighbors() if a.GetIdx() != azo_bond.GetBeginAtomIdx()][0]
+                azo_bond.SetStereoAtoms(b_idx, e_idx)
+            except IndexError: pass
+            
+        AllChem.Compute2DCoords(mol)
+        return Draw.MolToImage(mol, size=(350, 300), fitImage=True)
+
     def generate_3d_isomer_pdbqt(self, azo_smiles, isomer_type="trans", output_filename="isomer.pdbqt"):
         mol = Chem.MolFromSmiles(azo_smiles)
         azo_bond = None
@@ -59,9 +83,11 @@ class Azologizer:
         elif isomer_type.lower() == "cis":
             azo_bond.SetStereo(Chem.rdchem.BondStereo.STEREOZ)
 
-        begin_neighbor = [a.GetIdx() for a in azo_bond.GetBeginAtom().GetNeighbors() if a.GetIdx() != azo_bond.GetEndAtomIdx()][0]
-        end_neighbor = [a.GetIdx() for a in azo_bond.GetEndAtom().GetNeighbors() if a.GetIdx() != azo_bond.GetBeginAtomIdx()][0]
-        azo_bond.SetStereoAtoms(begin_neighbor, end_neighbor)
+        try:
+            begin_neighbor = [a.GetIdx() for a in azo_bond.GetBeginAtom().GetNeighbors() if a.GetIdx() != azo_bond.GetEndAtomIdx()][0]
+            end_neighbor = [a.GetIdx() for a in azo_bond.GetEndAtom().GetNeighbors() if a.GetIdx() != azo_bond.GetBeginAtomIdx()][0]
+            azo_bond.SetStereoAtoms(begin_neighbor, end_neighbor)
+        except IndexError: pass
 
         mol_3d = Chem.AddHs(mol)
         params = AllChem.ETKDGv3()
@@ -92,8 +118,7 @@ def fetch_ligand_data_from_pubchem(smiles_string):
                 metadata["name"] = props.get("Title", "Target Chemical Derivative")
                 metadata["mw"] = f"{props.get('MolecularWeight', 'N/A')} g/mol"
                 metadata["formula"] = props.get("MolecularFormula", "N/A")
-    except Exception:
-        pass 
+    except Exception: pass 
     return metadata
 
 # --- BIOINFORMATICS PARSERS & CONVERTERS ---
@@ -510,6 +535,7 @@ if "docking_results_raw" not in st.session_state: st.session_state.docking_resul
 if "serialized_ligand_block" not in st.session_state: st.session_state.serialized_ligand_block = None
 if "ligand_summary_text" not in st.session_state: st.session_state.ligand_summary_text = ""
 if "smiles_cache" not in st.session_state: st.session_state.smiles_cache = ""
+if "mutated_azo_smiles" not in st.session_state: st.session_state.mutated_azo_smiles = ""
 if "selected_native_ligand" not in st.session_state: st.session_state.selected_native_ligand = "None (Manual / Blind Docking)"
 if "detected_pockets" not in st.session_state: st.session_state.detected_pockets = []
 if "active_retained_ions" not in st.session_state: st.session_state.active_retained_ions = "None"
@@ -705,6 +731,17 @@ with col_params:
 
     if st.session_state.ligand_ready:
         st.markdown(f"""> **Ligand Metric Profile:** \n> {st.session_state.ligand_summary_text}""")
+        
+        # 2D Normal Structure Toggle
+        if st.session_state.smiles_cache:
+            if st.checkbox("👁️ Show 2D Structural Native Representation", value=False):
+                try:
+                    native_mol = Chem.MolFromSmiles(st.session_state.smiles_cache)
+                    AllChem.Compute2DCoords(native_mol)
+                    img = Draw.MolToImage(native_mol, size=(400, 300), fitImage=True)
+                    st.image(img, caption="Native 2D Scaffold")
+                except Exception as e:
+                    st.error("Could not render 2D structure.")
 
     # =================================================================
     # PHASE 3: PHOTOPHARMACOLOGY AZOLOGIZATION TRIGGER
@@ -712,7 +749,7 @@ with col_params:
     if st.session_state.ligand_ready and st.session_state.smiles_cache:
         st.write("---")
         st.subheader("💡 Phase 3: Surya-Sanyog Azologization")
-        st.markdown("Detect natural `C=C` stilbene bridges and computationally mutate them into light-activated `N=N` (azo) switches.")
+        st.markdown("Detect natural `C=C` stilbene bridges in the tribal scaffold and computationally mutate them into light-activated `N=N` (azo) switches.")
         
         if st.button("🧬 Run In Silico Azologization", type="primary"):
             with st.spinner("Executing virtual synthesis and generating 3D Isomers..."):
@@ -720,7 +757,9 @@ with col_params:
                 mutated_smiles = engine.mutate_ligand(st.session_state.smiles_cache)
                 
                 if mutated_smiles:
+                    st.session_state.mutated_azo_smiles = mutated_smiles
                     st.success(f"Mutation Successful! New Azo-Scaffold: `{mutated_smiles}`")
+                    
                     trans_ok, trans_file = engine.generate_3d_isomer_pdbqt(mutated_smiles, "trans", "ligand_trans.pdbqt")
                     cis_ok, cis_file = engine.generate_3d_isomer_pdbqt(mutated_smiles, "cis", "ligand_cis.pdbqt")
                     
@@ -740,11 +779,26 @@ with col_params:
     # --- ISOMER COMPARISON & SELECTOR PANEL ---
     if st.session_state.get("has_isomers", False):
         st.markdown("### 🔬 Structural Geometric Comparison")
-        st.markdown("Observe the massive geometric shift. The *Trans* isomer remains straight to mimic the native drug, while UV/Visible light snaps the *Cis* isomer into a bent shape, breaking receptor affinity.")
+        st.markdown("""
+        **Comparative Statement:** > The massive geometric shift dictates pharmacological activity. The **Trans isomer (left)** remains relatively straight to mimic the native drug geometry, allowing it to dock perfectly into the receptor cavity. When exposed to specific light wavelengths, it isomerizes into the **Cis form (right)**, creating a sharp 120° bend that drastically breaks the required pharmacophore alignment and effectively turns the drug "off".
+        """)
         
+        # 2D Side-by-Side Comparison
+        if st.checkbox("👁️ Show 2D Cis/Trans Geometric View", value=True):
+            engine = Azologizer()
+            col_2d_trans, col_2d_cis = st.columns(2)
+            try:
+                with col_2d_trans:
+                    st.image(engine.get_2d_isomer_image(st.session_state.mutated_azo_smiles, "trans"), caption="2D Trans Isomer (Dark State)")
+                with col_2d_cis:
+                    st.image(engine.get_2d_isomer_image(st.session_state.mutated_azo_smiles, "cis"), caption="2D Cis Isomer (Light State)")
+            except Exception:
+                st.error("Could not render 2D isomer structures.")
+
+        # 3D Side-by-Side Comparison
+        st.markdown("**Interactive 3D Matrices:**")
         with open("ligand_trans.pdbqt", "r") as f: t_data = f.read()
         with open("ligand_cis.pdbqt", "r") as f: c_data = f.read()
-        
         render_isomer_comparison(t_data, c_data)
         
         st.markdown("**Switch Target Geometry for Docking:**")

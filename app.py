@@ -385,7 +385,6 @@ def split_docking_poses(poses_file_path):
     return poses
 
 def get_top_affinity_from_pdbqt(file_path):
-    """Directly extracts the topmost REMARK VINA RESULT from a saved PDBQT file."""
     if not os.path.exists(file_path): return 0.0
     with open(file_path, 'r') as f:
         for line in f:
@@ -459,7 +458,26 @@ def render_isomer_comparison(trans_data, cis_data):
     """
     components.html(html_content, height=370)
 
-def render_dual_docking_viewport(protein_data, trans_pose, cis_pose):
+def render_dual_docking_viewport(protein_data, trans_pose, cis_pose, int_t=[], int_c=[]):
+    
+    int_js_t = ""
+    for interact in int_t:
+        rc, lc = interact["r_coord"], interact["l_coord"]
+        color = "yellow" if "Hydrogen" in interact["Interaction Type"] else "cyan"
+        int_js_t += f"""
+        v_t.addCylinder({{start:{{x:{rc[0]}, y:{rc[1]}, z:{rc[2]}}}, end:{{x:{lc[0]}, y:{lc[1]}, z:{lc[2]}}}, radius:0.07, color:'{color}', dashed:true}});
+        v_t.addLabel("{interact['Residue Contact']} ({interact['Distance (Å)']}A)", {{position:{{x:{rc[0]}, y:{rc[1]}, z:{rc[2]}}}, backgroundColor:'white', fontColor:'black', backgroundOpacity:0.8, fontSize:10}});
+        """
+        
+    int_js_c = ""
+    for interact in int_c:
+        rc, lc = interact["r_coord"], interact["l_coord"]
+        color = "yellow" if "Hydrogen" in interact["Interaction Type"] else "cyan"
+        int_js_c += f"""
+        v_c.addCylinder({{start:{{x:{rc[0]}, y:{rc[1]}, z:{rc[2]}}}, end:{{x:{lc[0]}, y:{lc[1]}, z:{lc[2]}}}, radius:0.07, color:'{color}', dashed:true}});
+        v_c.addLabel("{interact['Residue Contact']} ({interact['Distance (Å)']}A)", {{position:{{x:{rc[0]}, y:{rc[1]}, z:{rc[2]}}}, backgroundColor:'white', fontColor:'black', backgroundOpacity:0.8, fontSize:10}});
+        """
+
     html_content = f"""
     <div style="display: flex; width: 100%; justify-content: space-between; gap: 10px;">
         <div id="dock_trans" style="width: 50%; height: 450px; border:2px solid #2e7d32; border-radius:8px; position:relative; background:#ffffff;">
@@ -476,6 +494,7 @@ def render_dual_docking_viewport(protein_data, trans_pose, cis_pose):
         v_t.setStyle({{model: 0}}, {{cartoon: {{colorscheme: 'chain', style: 'oval', thickness: 0.6}}}});
         v_t.addModel(`{trans_pose}`, 'pdb');
         v_t.setStyle({{model: 1}}, {{stick: {{colorscheme: 'greenCarbon', radius: 0.28}}}});
+        {int_js_t}
         v_t.zoomTo(); v_t.render();
 
         let v_c = $3Dmol.createViewer(document.getElementById('dock_cis'), {{backgroundColor: '#ffffff'}});
@@ -483,6 +502,7 @@ def render_dual_docking_viewport(protein_data, trans_pose, cis_pose):
         v_c.setStyle({{model: 0}}, {{cartoon: {{colorscheme: 'chain', style: 'oval', thickness: 0.6}}}});
         v_c.addModel(`{cis_pose}`, 'pdb');
         v_c.setStyle({{model: 1}}, {{stick: {{colorscheme: 'orangeCarbon', radius: 0.28}}}});
+        {int_js_c}
         v_c.zoomTo(); v_c.render();
     </script>
     """
@@ -657,226 +677,121 @@ with col_params:
 
     st.write("---")
     st.header("2. Phase 1: Small Molecule Phytochemical Setup")
-    
     iks_library = {
         "Pterostilbene (Antidiabetic / Anticancer)": "COc1cc(C=Cc2ccc(O)cc2)cc(OC)c1",
         "Resveratrol (Antidiabetic / Anticancer)": "Oc1cc(O)cc(C=Cc2ccc(O)cc2)c1",
         "Combretastatin A-4 (Anticancer)": "COc1cc(C=Cc2ccc(O)c(OC)c2)cc(OC)c1OC",
-        "Piceatannol (Antidiabetic)": "Oc1cc(O)cc(C=Cc2ccc(O)c(O)c2)c1"
     }
+    selected_phytochemical = st.selectbox("Select Native Trans-Stilbene Scaffold:", list(iks_library.keys()))
+    smiles_input_val = iks_library[selected_phytochemical]
 
-    ligand_source = st.radio("Choose Ligand Input Method:", [
-        "Select from Curated Tribal Library (Phase 1)", 
-        "Custom SMILES String Input", 
-        "Upload Structural File (.pdb, .sdf)"
-    ])
-    
-    smiles_input_val = ""
-    uploaded_lig_buffer = None
-    uploaded_lig_name = ""
-
-    if ligand_source == "Select from Curated Tribal Library (Phase 1)":
-        selected_phytochemical = st.selectbox("Select Native Trans-Stilbene Scaffold:", list(iks_library.keys()))
-        smiles_input_val = iks_library[selected_phytochemical]
-        st.info(f"Target SMILES string loaded: `{smiles_input_val}`")
-    elif ligand_source == "Custom SMILES String Input":
-        smiles_input_val = st.text_input("Enter Ligand SMILES String", "CC(=O)NC1=CC=C(O)C=C1").strip()
-    else:
-        uploaded_lig_file = st.file_uploader("Upload Small Molecule File", type=["pdb", "sdf"])
-        if uploaded_lig_file:
-            uploaded_lig_buffer = uploaded_lig_file
-            uploaded_lig_name = uploaded_lig_file.name
-
-    if st.button("📥 Load Ligand Structure", key="load_ligand_btn"):
-        if ligand_source in ["Select from Curated Tribal Library (Phase 1)", "Custom SMILES String Input"] and smiles_input_val:
-            with st.spinner("Processing molecular topology..."):
-                pub_data = fetch_ligand_data_from_pubchem(smiles_input_val)
-                try:
-                    mol = Chem.MolFromSmiles(smiles_input_val)
-                    if mol:
-                        ok, _ = convert_smiles_to_pdbqt(smiles_input_val, "ligand.pdbqt")
-                        if ok:
-                            shutil.copy("ligand.pdbqt", "ligand_native.pdbqt")
-                            st.session_state.ligand_ready = True
-                            st.session_state.smiles_cache = smiles_input_val
-                            with open("ligand.pdbqt", "r") as f: st.session_state.serialized_ligand_block = f.read()
-                            st.session_state.ligand_summary_text = f"**Name:** {pub_data['name']} | **Formula:** {pub_data['formula']} | **Molecular Weight:** {pub_data['mw']}"
-                            st.success("Ligand metadata mapped!")
-                            st.rerun()
-                except Exception as e: st.error(f"SMILES Parsing Failure: {e}")
-            
-        elif ligand_source == "Upload Structural File (.pdb, .sdf)" and uploaded_lig_buffer is not None:
-            if st.session_state.last_uploaded_ligand != uploaded_lig_name:
-                temp_in = f"raw_ligand_{uploaded_lig_name}"
-                with open(temp_in, "wb") as f: f.write(uploaded_lig_buffer.getbuffer())
-                try:
-                    mol = None
-                    if uploaded_lig_name.lower().endswith(".pdb"): mol = Chem.MolFromPDBFile(temp_in, removeHs=False)
-                    elif uploaded_lig_name.lower().endswith((".sdf", ".mol")):
-                        suppl = Chem.SDMolSupplier(temp_in, removeHs=False)
-                        if len(suppl) > 0: mol = suppl[0]
-                    
-                    if mol is not None:
-                        try: Chem.SanitizeMol(mol); AllChem.AssignBondOrdersFromTopology(mol)
-                        except Exception: pass
-                        if mol.GetNumConformers() == 0:
-                            mol = Chem.AddHs(mol); AllChem.EmbedMolecule(mol, AllChem.ETKDGv3()); AllChem.MMFFOptimizeMolecule(mol)
-                        temp_pdb = "temp_lig_state.pdb"
-                        Chem.MolToPDBFile(mol, temp_pdb)
-                        ok, _ = convert_pdb_to_pdbqt(temp_pdb, "ligand.pdbqt", is_ligand=True)
-                        st.session_state.ligand_ready = ok
-                        try: st.session_state.smiles_cache = Chem.MolToSmiles(mol)
-                        except Exception: st.session_state.smiles_cache = ""
-                    else:
-                        ok, _ = convert_pdb_to_pdbqt(temp_in, "ligand.pdbqt", is_ligand=True)
-                        st.session_state.ligand_ready = ok
-                        st.session_state.smiles_cache = ""
-                    
-                    if st.session_state.ligand_ready:
-                        shutil.copy("ligand.pdbqt", "ligand_native.pdbqt")
-                        st.session_state.ligand_summary_text = f"**{uploaded_lig_name}** parsed safely."
-                        with open("ligand.pdbqt", "r") as f: st.session_state.serialized_ligand_block = f.read()
-                        if os.path.exists(temp_in): os.remove(temp_in)
-                        st.session_state.last_uploaded_ligand = uploaded_lig_name
-                        st.success("Structural file loaded!")
-                        time.sleep(0.5); st.rerun()
-                except Exception as e: st.error(f"Upload failed: {e}")
-                finally:
-                    if os.path.exists(temp_in): os.remove(temp_in)
-
-    if st.session_state.target_ready and os.path.exists("ligand.pdbqt") and os.path.getsize("ligand.pdbqt") > 20:
-        st.session_state.ligand_ready = True
-
-    if st.session_state.ligand_ready:
-        st.markdown(f"""> **Ligand Metric Profile:** \n> {st.session_state.ligand_summary_text}""")
-        
-        if st.session_state.smiles_cache:
-            if st.checkbox("👁️ Show 2D Structural Native Representation", value=False):
-                try:
-                    native_mol = Chem.MolFromSmiles(st.session_state.smiles_cache)
-                    AllChem.Compute2DCoords(native_mol)
-                    img = Draw.MolToImage(native_mol, size=(400, 300), fitImage=True)
-                    st.image(img, caption="Native 2D Scaffold")
-                except Exception as e:
-                    st.error("Could not render 2D structure.")
+    if st.button("📥 Load Ligand Structure"):
+        pub_data = fetch_ligand_data_from_pubchem(smiles_input_val)
+        ok, _ = convert_smiles_to_pdbqt(smiles_input_val, "ligand.pdbqt")
+        if ok:
+            shutil.copy("ligand.pdbqt", "ligand_native.pdbqt")
+            st.session_state.ligand_ready = True
+            st.session_state.smiles_cache = smiles_input_val
+            st.success(f"Loaded: {pub_data['name']}")
 
     if st.session_state.ligand_ready and st.session_state.smiles_cache:
         st.write("---")
         st.subheader("💡 Phase 3: Surya-Sanyog Azologization")
-        st.markdown("Detect natural `C=C` stilbene bridges in the tribal scaffold and computationally mutate them into light-activated `N=N` (azo) switches.")
         
         if st.button("🧬 Run In Silico Azologization", type="primary"):
-            with st.spinner("Executing virtual synthesis and generating 3D Isomers..."):
+            with st.spinner("Generating 3D Isomers..."):
                 engine = Azologizer()
                 mutated_smiles = engine.mutate_ligand(st.session_state.smiles_cache)
-                
                 if mutated_smiles:
                     st.session_state.mutated_azo_smiles = mutated_smiles
                     st.success(f"Mutation Successful! New Azo-Scaffold: `{mutated_smiles}`")
-                    
                     trans_ok, trans_file = engine.generate_3d_isomer_pdbqt(mutated_smiles, "trans", "ligand_trans.pdbqt")
                     cis_ok, cis_file = engine.generate_3d_isomer_pdbqt(mutated_smiles, "cis", "ligand_cis.pdbqt")
                     
                     if trans_ok and cis_ok:
                         st.session_state.has_isomers = True
                         st.info("Successfully folded Trans and Cis 3D geometries.")
-                        if os.path.exists("ligand_trans.pdbqt"):
-                            shutil.copy("ligand_trans.pdbqt", "ligand.pdbqt")
-                            with open("ligand.pdbqt", "r") as f:
-                                st.session_state.serialized_ligand_block = f.read()
-                            st.session_state.ligand_summary_text += "\n\n**Currently Loaded:** Trans-Azo Isomer (Dark State)"
-                    else:
-                        st.error("Failed to map constrained 3D coordinates for the isomers.")
-                else:
-                    st.warning("No valid C=C bridge found. Ensure you selected a stilbene like Resveratrol or Pterostilbene.")
-                    
+                    else: st.error("Failed to map constrained 3D coordinates.")
+                else: st.warning("No valid C=C bridge found.")
+
     if st.session_state.get("has_isomers", False):
-        st.markdown("### 🔬 Structural Geometric Comparison")
-        st.markdown("""
-        **Comparative Statement:** > The massive geometric shift dictates pharmacological activity. The **Trans isomer (left)** remains relatively straight to mimic the native drug geometry, allowing it to dock perfectly into the receptor cavity. When exposed to specific light wavelengths, it isomerizes into the **Cis form (right)**, creating a sharp 120° bend that drastically breaks the required pharmacophore alignment and effectively turns the drug "off".
-        """)
-        
-        if st.checkbox("👁️ Show 2D Cis/Trans Geometric View", value=True):
-            engine = Azologizer()
-            col_2d_trans, col_2d_cis = st.columns(2)
-            try:
-                with col_2d_trans:
-                    st.image(engine.get_2d_isomer_image(st.session_state.mutated_azo_smiles, "trans"), caption="2D Trans Isomer (Dark State)")
-                with col_2d_cis:
-                    st.image(engine.get_2d_isomer_image(st.session_state.mutated_azo_smiles, "cis"), caption="2D Cis Isomer (Light State)")
-            except Exception:
-                st.error("Could not render 2D isomer structures.")
-
-        st.markdown("**Interactive 3D Matrices:**")
-        with open("ligand_trans.pdbqt", "r") as f: t_data = f.read()
-        with open("ligand_cis.pdbqt", "r") as f: c_data = f.read()
-        render_isomer_comparison(t_data, c_data)
-        
-        st.markdown("**Switch Target Geometry for Docking:**")
-        selected_isomer = st.radio("Select Active Isomer to inject into the Receptor Grid:", ["Trans (Dark State / Active)", "Cis (Light State / Inactive)"], horizontal=True)
-        
-        if st.button("🔄 Apply Isomer to 3D Canvas"):
-            if "Trans" in selected_isomer and os.path.exists("ligand_trans.pdbqt"):
-                shutil.copy("ligand_trans.pdbqt", "ligand.pdbqt")
-            elif "Cis" in selected_isomer and os.path.exists("ligand_cis.pdbqt"):
-                shutil.copy("ligand_cis.pdbqt", "ligand.pdbqt")
-                
-            with open("ligand.pdbqt", "r") as f: 
-                st.session_state.serialized_ligand_block = f.read()
-            st.success(f"Loaded {selected_isomer.split('(')[0].strip()} into the active docking engine.")
-            time.sleep(0.5)
-            st.rerun()
-
-    if st.session_state.target_ready and os.path.exists("protein.pdbqt"):
         st.write("---")
-        st.header("3. Smart Cavity Pocket Finder")
-        if st.button("🔍 Scan Surface For Structural Cavities", use_container_width=True):
-            with st.spinner("Analyzing macromolecular spatial curvature dynamics..."):
-                pockets_discovered = identify_protein_cavities("protein.pdbqt")
-                st.session_state.detected_pockets = pockets_discovered
-                if pockets_discovered: st.success(f"Successfully mapped {len(pockets_discovered)} surface cavities!")
-
-        if st.session_state.detected_pockets:
-            p_opts = st.session_state.detected_pockets
-            selected_p_idx = st.selectbox("Select Target Computational Cavity:", options=range(len(p_opts)), format_func=lambda idx: f"{p_opts[idx]['Pocket_ID']} (Density Score: {p_opts[idx]['Score']})")
-            if st.button("🎯 Align Grid Parameters to This Cavity"):
-                chosen_p = p_opts[selected_p_idx]
-                st.session_state.cx, st.session_state.cy, st.session_state.cz = chosen_p["cx"], chosen_p["cy"], chosen_p["cz"]
-                st.session_state.sx, st.session_state.sy, st.session_state.sz = chosen_p["bx"], chosen_p["by"], chosen_p["bz"]
-                st.session_state.selected_native_ligand = f"Automated Cluster Pocket: {chosen_p['Pocket_ID']}"
-                st.success(f"Grid coordinates targeted over pocket space!")
-                st.rerun()
-
-    st.header("4. Search Space Mechanics (Grid Box)")
-    
-    if st.button("🌐 Enable Blind Docking (Full Protein Surface)", use_container_width=True):
-        if st.session_state.target_ready and os.path.exists("protein.pdbqt"):
+        st.header("3. Grid Box Mechanics")
+        if st.button("🌐 Enable Blind Docking (Full Surface)", use_container_width=True):
             cx, cy, cz, sx, sy, sz = compute_protein_centroid("protein.pdbqt")
             st.session_state.cx, st.session_state.cy, st.session_state.cz = cx, cy, cz
             st.session_state.sx, st.session_state.sy, st.session_state.sz = sx, sy, sz
-            st.session_state.selected_native_ligand = "Blind Docking Enabled"
             st.rerun()
 
-    grid_cx = st.number_input("Center X Coordinate", value=float(st.session_state.cx), step=0.1)
-    grid_cy = st.number_input("Center Y Coordinate", value=float(st.session_state.cy), step=0.1)
-    grid_cz = st.number_input("Center Z Coordinate", value=float(st.session_state.cz), step=0.1)
-    
-    max_x = max(60, int(st.session_state.sx) + 10)
-    max_y = max(60, int(st.session_state.sy) + 10)
-    max_z = max(60, int(st.session_state.sz) + 10)
+        c_col1, c_col2, c_col3 = st.columns(3)
+        grid_cx = c_col1.number_input("Center X", value=float(st.session_state.cx), step=1.0)
+        grid_cy = c_col2.number_input("Center Y", value=float(st.session_state.cy), step=1.0)
+        grid_cz = c_col3.number_input("Center Z", value=float(st.session_state.cz), step=1.0)
+        
+        grid_sx = c_col1.number_input("Size X", value=float(st.session_state.sx), step=1.0)
+        grid_sy = c_col2.number_input("Size Y", value=float(st.session_state.sy), step=1.0)
+        grid_sz = c_col3.number_input("Size Z", value=float(st.session_state.sz), step=1.0)
 
-    grid_sx = st.slider("Grid Box Size X (Å)", 10, max_x, int(st.session_state.sx))
-    grid_sy = st.slider("Grid Box Size Y (Å)", 10, max_y, int(st.session_state.sy))
-    grid_sz = st.slider("Grid Box Size Z (Å)", 10, max_z, int(st.session_state.sz))
-    exhaustiveness = st.slider("Search Exhaustiveness", min_value=4, max_value=32, value=8, step=4)
-    
-    can_dock = bool(st.session_state.target_ready and st.session_state.ligand_ready)
-    run_btn = st.button("🚀 Initialize Docking Algorithm (Single Run)", type="primary", disabled=not can_dock)
+        exhaustiveness = st.slider("Search Exhaustiveness", 4, 32, 8)
+        
+        can_dock = bool(st.session_state.target_ready and st.session_state.ligand_ready)
+
+        st.write("---")
+        st.header("🚀 4. Execute Comparative Photo-Docking")
+        st.markdown("This will run AutoDock Vina sequentially on the **Native** (Original), **Trans** (Dark State) and **Cis** (Light State) isomers in the exact same receptor cavity to construct a comparative matrix.")
+        
+        if st.button("⚡ Run Full Comparative Docking Sequence", type="primary", disabled=not can_dock):
+            progress_bar = st.progress(0, text="Docking Native Ligand...")
+            
+            if os.path.exists("ligand_native.pdbqt"):
+                cmd_native = ["./vina", "--receptor", "protein.pdbqt", "--ligand", "ligand_native.pdbqt", "--center_x", str(grid_cx), "--center_y", str(grid_cy), "--center_z", str(grid_cz), "--size_x", str(grid_sx), "--size_y", str(grid_sy), "--size_z", str(grid_sz), "--exhaustiveness", str(exhaustiveness), "--out", "docking_native.pdbqt"]
+                subprocess.run(cmd_native, capture_output=True, text=True)
+                
+            progress_bar.progress(33, text="Docking Trans Isomer (Dark State)...")
+            
+            cmd_trans = ["./vina", "--receptor", "protein.pdbqt", "--ligand", "ligand_trans.pdbqt", "--center_x", str(grid_cx), "--center_y", str(grid_cy), "--center_z", str(grid_cz), "--size_x", str(grid_sx), "--size_y", str(grid_sy), "--size_z", str(grid_sz), "--exhaustiveness", str(exhaustiveness), "--out", "docking_trans.pdbqt"]
+            t_proc = subprocess.run(cmd_trans, capture_output=True, text=True)
+            st.session_state.raw_trans_log = t_proc.stdout
+            
+            progress_bar.progress(66, text="Docking Cis Isomer (Light State)...")
+            
+            cmd_cis = ["./vina", "--receptor", "protein.pdbqt", "--ligand", "ligand_cis.pdbqt", "--center_x", str(grid_cx), "--center_y", str(grid_cy), "--center_z", str(grid_cz), "--size_x", str(grid_sx), "--size_y", str(grid_sy), "--size_z", str(grid_sz), "--exhaustiveness", str(exhaustiveness), "--out", "docking_cis.pdbqt"]
+            c_proc = subprocess.run(cmd_cis, capture_output=True, text=True)
+            st.session_state.raw_cis_log = c_proc.stdout
+            
+            progress_bar.progress(100, text="Comparative Docking Complete!")
+            st.session_state.comparative_run_complete = True
+            time.sleep(1)
+            st.rerun()
+
+    # --- SINGLE DOCKING EXECUTION FOR MANUAL UPLOADS ---
+    st.write("---")
+    if st.button("🚀 Initialize Docking Algorithm (Single Run Mode)", type="secondary", disabled=not can_dock):
+        vina_command = ["./vina", "--receptor", "protein.pdbqt", "--ligand", "ligand.pdbqt", "--center_x", str(grid_cx), "--center_y", str(grid_cy), "--center_z", str(grid_cz), "--size_x", str(grid_sx), "--size_y", str(grid_sy), "--size_z", str(grid_sz), "--exhaustiveness", str(exhaustiveness), "--out", "docking_poses.pdbqt"]
+        progress_bar = st.progress(0, text="Initializing computational engine...")
+        try:
+            process = subprocess.Popen(vina_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            output_log, progress_count, current_line = [], 0, ""
+            while True:
+                char = process.stdout.read(1).decode("utf-8", errors="ignore")
+                if not char: break
+                output_log.append(char)
+                if char == '*':
+                    progress_count += 1
+                    progress_bar.progress(min(100, int((progress_count / 50) * 100)), text="Exploring binding modes...")
+            process.wait()
+            if process.returncode == 0:
+                progress_bar.progress(100, text="Optimization complete!")
+                st.session_state.docking_results_raw = "".join(output_log)
+                st.session_state.uff_cache = {} 
+                time.sleep(0.5); st.rerun()
+            else: st.error("Engine calculation error.")
+        except Exception as e: st.error(f"Pipeline failed: {e}")
 
 with col_visual:
     st.header("5. Active Viewport Canvas")
     
-    if st.session_state.docking_results_raw is None:
+    if st.session_state.docking_results_raw is None and not st.session_state.get("comparative_run_complete", False):
         view_tabs = st.tabs(["Receptor & Grid Space", "Standalone Ligand (Interactive 3D)"])
         
         with view_tabs[0]:
@@ -900,16 +815,13 @@ with col_visual:
                 """
                 components.html(ligand_html, height=450)
                 
-    else:
-        st.subheader("Interactive Complex Viewport")
+    elif st.session_state.docking_results_raw is not None and not st.session_state.get("comparative_run_complete", False):
+        st.subheader("Interactive Single Run Complex Viewport")
         if os.path.exists("docking_poses.pdbqt"):
             parsed_poses = split_docking_poses("docking_poses.pdbqt")
             if parsed_poses:
                 selected_pose = st.selectbox("Choose Docking Pose to Visualize:", options=list(parsed_poses.keys()), format_func=lambda x: f"Mode {x} Pose Fit")
-                
-                # IMPORTANT FIX: Protects against Streamlit State Ghosting crashes
-                if selected_pose not in parsed_poses:
-                    selected_pose = list(parsed_poses.keys())[0]
+                if selected_pose not in parsed_poses: selected_pose = list(parsed_poses.keys())[0]
 
                 with open("protein.pdbqt", "r") as f: protein_data = f.read()
                 
@@ -931,10 +843,8 @@ with col_visual:
                 uff_progress_placeholder = st.empty() 
                 
                 if cache_key not in st.session_state.uff_cache:
-                    try:
-                        pre_uff, post_uff, delta_uff = execute_uff_complex_minimization("protein.pdbqt", parsed_poses[selected_pose], uff_progress_placeholder)
-                    except Exception as e:
-                        pre_uff, post_uff, delta_uff = "N/A", "N/A", "N/A"
+                    try: pre_uff, post_uff, delta_uff = execute_uff_complex_minimization("protein.pdbqt", parsed_poses[selected_pose], uff_progress_placeholder)
+                    except Exception as e: pre_uff, post_uff, delta_uff = "N/A", "N/A", "N/A"
                     st.session_state.uff_cache[cache_key] = (pre_uff, post_uff, delta_uff)
                 
                 uff_progress_placeholder.empty()
@@ -942,17 +852,24 @@ with col_visual:
 
                 active_interactions = compute_spatial_interactions("protein.pdbqt", parsed_poses[selected_pose])
                 
-                html_metric_card = """
+                res_str = ", ".join(list(set([i["Residue Contact"] for i in active_interactions]))) if active_interactions else "None"
+                bond_str = ", ".join(list(set([i["Interaction Type"] for i in active_interactions]))) if active_interactions else "None"
+
+                html_metric_card = f"""
                 <div style="background-color:#f0f7f4; border-left:6px solid #2e7d32; padding:16px; border-radius:8px; margin-bottom:15px; font-family:sans-serif;">
                     <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #e0e8e4; padding-bottom:8px; margin-bottom:10px;">
                         <div>
                             <span style="font-size:12px; color:#555; text-transform:uppercase; font-weight:bold;">Active Pose Vina Affinity</span><br>
-                            <span style="font-size:36px; font-weight:900; color:{};">{} <span style="font-size:18px; font-weight:normal;">kcal/mol</span></span>
+                            <span style="font-size:36px; font-weight:900; color:{aff_color};">{pose_affinity_score} <span style="font-size:18px; font-weight:normal;">kcal/mol</span></span>
                         </div>
                     </div>
-                    <div style="font-size: 13px; color: #444;"><b>📍 UFF Initial Energy:</b> {} kcal/mol | <b>📉 Optimized Energy:</b> {} kcal/mol</div>
+                    <div style="font-size: 13px; color: #444; margin-bottom:8px;"><b>📍 UFF Initial Energy:</b> {pre_uff} kcal/mol | <b>📉 Optimized Energy:</b> {post_uff} kcal/mol</div>
+                    <div style="font-size: 13px; color: #444; background-color:#e8f5e9; padding:10px; border-radius:5px;">
+                        <b>🧬 Interacting Residues:</b> {res_str}<br>
+                        <b>🔗 Contact Bond Types:</b> {bond_str}
+                    </div>
                 </div>
-                """.format(aff_color, pose_affinity_score, pre_uff, post_uff)
+                """
                 st.html(html_metric_card)
 
                 col_render, col_mesh = st.columns([1, 1])
@@ -961,92 +878,81 @@ with col_visual:
                     
                 render_advanced_modeling_blueprint(receptor_data=protein_data, ligand_data=parsed_poses[selected_pose], mode=style_mode, show_surface=surf_toggle, interactions_list=active_interactions)
 
-# --- ENGINE COMPUTATION EXECUTION BOUNDARY ---
-if run_btn and can_dock:
-    vina_command = ["./vina", "--receptor", "protein.pdbqt", "--ligand", "ligand.pdbqt", "--center_x", str(grid_cx), "--center_y", str(grid_cy), "--center_z", str(grid_cz), "--size_x", str(grid_sx), "--size_y", str(grid_sy), "--size_z", str(grid_sz), "--exhaustiveness", str(exhaustiveness), "--out", "docking_poses.pdbqt"]
-    progress_bar = st.progress(0, text="Initializing computational engine...")
-    try:
-        process = subprocess.Popen(vina_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        output_log, progress_count, current_line = [], 0, ""
-        while True:
-            char = process.stdout.read(1).decode("utf-8", errors="ignore")
-            if not char: break
-            output_log.append(char)
-            if char == '*':
-                progress_count += 1
-                progress_bar.progress(min(100, int((progress_count / 50) * 100)), text="Exploring binding modes...")
-        process.wait()
-        if process.returncode == 0:
-            progress_bar.progress(100, text="Optimization complete!")
-            st.session_state.docking_results_raw = "".join(output_log)
-            st.session_state.uff_cache = {} 
-            time.sleep(0.5); st.rerun()
-        else: st.error("Engine calculation error.")
-    except Exception as e: st.error(f"Pipeline failed: {e}")
-        
-if st.session_state.docking_results_raw is not None:
-    st.write("---")
-    st.header("📊 Screening Metrics Dashboard & Data Export")
-    df_results_global = parse_vina_output_with_residues(st.session_state.docking_results_raw)
-    if not df_results_global.empty:
-        col_table, col_export = st.columns([2, 1])
-        with col_table: st.dataframe(df_results_global, hide_index=True, use_container_width=True)
-        with col_export:
-            st.download_button("📥 Download Data Sheet (.CSV)", data=df_results_global.to_csv(index=False).encode('utf-8'), file_name="photo_dock_report.csv", mime="text/csv", use_container_width=True)
+                st.markdown("### 📋 Local Contact Residues & Bond Assignments Matrix")
+                if active_interactions:
+                    df_int = pd.DataFrame(active_interactions)
+                    st.dataframe(df_int[["Residue Contact", "Interaction Type", "Distance (Å)"]], hide_index=True, use_container_width=True)
+                else:
+                    st.info("No close contacts detected within a 3.8 Å threshold radius.")
 
-
-# --- ADVANCED COMPARATIVE DOCKING & STATEMENT ---
-if st.session_state.get("has_isomers", False):
-    st.write("---")
-    st.header("⚡ 6. Comparative Photo-Docking (Trans vs Cis)")
-    st.markdown("Run AutoDock Vina simultaneously on both isomers to calculate the ΔΔG structural penalty and generate a comparative statement.")
-    
-    if st.button("🔄 Run Trans vs Cis Comparative Docking", type="primary"):
-        progress_bar_comp = st.progress(0, text="Docking Trans Isomer...")
-        cmd_trans = ["./vina", "--receptor", "protein.pdbqt", "--ligand", "ligand_trans.pdbqt", "--center_x", str(grid_cx), "--center_y", str(grid_cy), "--center_z", str(grid_cz), "--size_x", str(grid_sx), "--size_y", str(grid_sy), "--size_z", str(grid_sz), "--exhaustiveness", str(exhaustiveness), "--out", "docking_trans.pdbqt"]
-        t_proc = subprocess.run(cmd_trans, capture_output=True, text=True)
-        
-        progress_bar_comp.progress(50, text="Docking Cis Isomer...")
-        cmd_cis = ["./vina", "--receptor", "protein.pdbqt", "--ligand", "ligand_cis.pdbqt", "--center_x", str(grid_cx), "--center_y", str(grid_cy), "--center_z", str(grid_cz), "--size_x", str(grid_sx), "--size_y", str(grid_sy), "--size_z", str(grid_sz), "--exhaustiveness", str(exhaustiveness), "--out", "docking_cis.pdbqt"]
-        c_proc = subprocess.run(cmd_cis, capture_output=True, text=True)
-        
-        progress_bar_comp.progress(100, text="Comparative Docking Complete!")
-        st.session_state.raw_trans_log = t_proc.stdout
-        st.session_state.raw_cis_log = c_proc.stdout
-        st.session_state.comparative_run_complete = True
-        time.sleep(1)
-        st.rerun()
-
+# --- ADVANCED COMPARATIVE DOCKING RESULT PANEL ---
 if st.session_state.get("comparative_run_complete", False):
-    def get_top_affinity(stdout_text):
-        for line in stdout_text.split("\n"):
-            m = re.match(r"^\s*1\s+([-+]?\d+\.\d+)", line)
-            if m: return float(m.group(1))
-        return 0.0
-        
-    t_aff = get_top_affinity(st.session_state.raw_trans_log)
-    c_aff = get_top_affinity(st.session_state.raw_cis_log)
+    st.write("---")
+    st.header("📊 5. Photopharmacology Analytical Report")
+    
+    t_aff = get_top_affinity_from_pdbqt("docking_trans.pdbqt")
+    c_aff = get_top_affinity_from_pdbqt("docking_cis.pdbqt")
+    n_aff = get_top_affinity_from_pdbqt("docking_native.pdbqt") if os.path.exists("docking_native.pdbqt") else t_aff
+    
     delta_g_switch = round(c_aff - t_aff, 2)
     
-    if delta_g_switch > 1.5:
-        verdict = f"**Successful Switch Effect:** The massive shape change caused a **+{delta_g_switch} kcal/mol** penalty in binding energy (loss of affinity vs trans). Light exposure successfully turns this drug 'OFF'."
-        box_c, border_c = "#e8f5e9", "#2e7d32"
-    elif delta_g_switch < -1.5:
-        verdict = f"**Reverse Switch Effect:** The Cis isomer binds significantly better (**{delta_g_switch} kcal/mol** shift). Light exposure will turn this drug 'ON'."
-        box_c, border_c = "#e3f2fd", "#1565c0"
-    else:
-        verdict = f"**Ineffective Switch:** Both isomers bind with similar affinity (ΔΔG: **{delta_g_switch} kcal/mol**). The pocket is too large or flexible to block the bent isomer."
-        box_c, border_c = "#fff3e0", "#ef6c00"
-
-    st.markdown(f"""
-    <div style="background-color:{box_c}; border-left:6px solid {border_c}; padding:16px; border-radius:8px;">
-        <h4 style="margin-top:0;">Comparative Binding Statement (ΔΔG)</h4>
-        <p style="font-size:14px; margin-bottom:5px;"><b>Trans (Active):</b> {t_aff} kcal/mol</p>
-        <p style="font-size:14px; margin-bottom:10px;"><b>Cis (Inactive):</b> {c_aff} kcal/mol</p>
-        <p style="font-size:14px; line-height:1.4;">{verdict}</p>
-    </div>
-    """, unsafe_allow_html=True)
+    comp_data = {
+        "Compound State": ["Native Scaffold (Original)", "Trans-Azo (Dark State / Active)", "Cis-Azo (Light State / Inactive)"],
+        "Top Affinity (kcal/mol)": [n_aff, t_aff, c_aff],
+        "ΔG vs Native": ["0.00", f"{round(t_aff - n_aff, 2):.2f}", f"{round(c_aff - n_aff, 2):.2f}"]
+    }
+    df_comp = pd.DataFrame(comp_data)
     
+    col_tab, col_stmt = st.columns([1.5, 1])
+    with col_tab:
+        st.markdown("### Binding Affinity Comparison Matrix")
+        st.dataframe(df_comp, hide_index=True, use_container_width=True)
+        
+    with col_stmt:
+        if delta_g_switch > 1.5:
+            verdict = f"**Successful Switch Effect:** The massive shape change caused a **+{delta_g_switch} kcal/mol** penalty in binding energy (loss of affinity vs trans). Light exposure successfully turns this drug 'OFF'."
+            box_c, border_c = "#e8f5e9", "#2e7d32"
+        elif delta_g_switch < -1.5:
+            verdict = f"**Reverse Switch Effect:** The Cis isomer binds significantly better (**{delta_g_switch} kcal/mol** shift). Light exposure will turn this drug 'ON'."
+            box_c, border_c = "#e3f2fd", "#1565c0"
+        else:
+            verdict = f"**Ineffective Switch:** Both isomers bind with similar affinity (ΔΔG: **{delta_g_switch} kcal/mol**). The pocket is too large or flexible to block the bent isomer."
+            box_c, border_c = "#fff3e0", "#ef6c00"
+
+        st.markdown(f"""
+        <div style="background-color:{box_c}; border-left:6px solid {border_c}; padding:16px; border-radius:8px;">
+            <h4 style="margin-top:0;">Automated Analysis</h4>
+            <p style="font-size:14px; margin-bottom:5px;"><b>Trans (Active):</b> {t_aff} kcal/mol</p>
+            <p style="font-size:14px; margin-bottom:10px;"><b>Cis (Inactive):</b> {c_aff} kcal/mol</p>
+            <p style="font-size:14px; line-height:1.4;">{verdict}</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    st.markdown("### 🔬 Comparative 3D Binding Topologies")
+    poses_t = split_docking_poses("docking_trans.pdbqt")
+    poses_c = split_docking_poses("docking_cis.pdbqt")
+    
+    if os.path.exists("protein.pdbqt"):
+        with open("protein.pdbqt", "r") as f: prot_data = f.read()
+        
+        int_t = compute_spatial_interactions("protein.pdbqt", poses_t[1]) if 1 in poses_t else []
+        int_c = compute_spatial_interactions("protein.pdbqt", poses_c[1]) if 1 in poses_c else []
+        
+        if 1 in poses_t and 1 in poses_c:
+            render_dual_docking_viewport(prot_data, poses_t[1], poses_c[1], int_t, int_c)
+            
+        col_t_table, col_c_table = st.columns(2)
+        with col_t_table:
+            st.markdown("#### Trans Isomer Interactions")
+            if int_t:
+                st.dataframe(pd.DataFrame(int_t)[["Residue Contact", "Interaction Type", "Distance (Å)"]], hide_index=True, use_container_width=True)
+            else: st.info("No close contacts detected.")
+        with col_c_table:
+            st.markdown("#### Cis Isomer Interactions")
+            if int_c:
+                st.dataframe(pd.DataFrame(int_c)[["Residue Contact", "Interaction Type", "Distance (Å)"]], hide_index=True, use_container_width=True)
+            else: st.info("No close contacts detected.")
+            
     comp_html_report = f"""<!DOCTYPE html>
     <html>
     <head><title>PhotoDock Comparative Report</title></head>

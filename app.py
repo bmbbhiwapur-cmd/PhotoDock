@@ -146,35 +146,6 @@ def discover_and_list_all_heteroatoms(file_path):
                 hetero_counts[res_name] = hetero_counts.get(res_name, 0) + 1
     return hetero_counts
 
-def parse_bound_ligands(file_path):
-    ligands = {}
-    if not os.path.exists(file_path): return ligands
-    with open(file_path, "r") as f:
-        for line in f:
-            if line.startswith("HETATM"):
-                res_name = line[17:20].strip()
-                chain_id = line[21].strip() if line[21].strip() else "A"
-                try: res_seq = int(line[22:26].strip())
-                except ValueError: continue
-                if res_name in ["HOH", "WAT", "DOD"]: continue
-                key = f"{res_name}-{chain_id}-{res_seq}"
-                try:
-                    x, y, z = float(line[30:38].strip()), float(line[38:46].strip()), float(line[46:54].strip())
-                except ValueError: continue
-                if key not in ligands: ligands[key] = {"res": res_name, "chain": chain_id, "seq": res_seq, "coords": []}
-                ligands[key]["coords"].append((x, y, z))
-    processed_ligands = []
-    for key, info in ligands.items():
-        pts = info["coords"]
-        n_atoms = len(pts)
-        if n_atoms < 4: continue
-        cx, cy, cz = sum([p[0] for p in pts])/n_atoms, sum([p[1] for p in pts])/n_atoms, sum([p[2] for p in pts])/n_atoms
-        bx = max([p[0] for p in pts]) - min([p[0] for p in pts]) + 10.0
-        by = max([p[1] for p in pts]) - min([p[1] for p in pts]) + 10.0
-        bz = max([p[2] for p in pts]) - min([p[2] for p in pts]) + 10.0
-        processed_ligands.append({"ID": info["res"], "Chain": info["chain"], "ResSeq": info["seq"], "Atoms": n_atoms, "cx": round(cx, 2), "cy": round(cy, 2), "cz": round(cz, 2), "bx": round(bx, 1), "by": round(by, 1), "bz": round(bz, 1)})
-    return processed_ligands
-
 def identify_protein_cavities(pdbqt_file, max_pockets=5):
     coords = []
     if not os.path.exists(pdbqt_file): return []
@@ -394,46 +365,6 @@ def get_top_affinity_from_pdbqt(file_path):
                 return float(line.split()[3])
     return 0.0
 
-def parse_vina_output_with_residues(stdout_text):
-    data = []
-    poses_dict = split_docking_poses("docking_poses.pdbqt")
-    if not stdout_text: return pd.DataFrame(data)
-    for line in stdout_text.split("\n"):
-        parts = line.split()
-        if len(parts) >= 4 and parts[0].isdigit():
-            try:
-                mode_idx = int(parts[0])
-                aff = float(parts[1])
-                rmsd_lb = float(parts[2])
-                rmsd_ub = float(parts[3])
-                res_string, bond_types = "N/A", "N/A"
-                if mode_idx in poses_dict:
-                    ints = compute_spatial_interactions("protein.pdbqt", poses_dict[mode_idx])
-                    if ints:
-                        res_string = ", ".join(list(set([i["Residue Contact"] for i in ints])))
-                        bond_types = ", ".join(list(set([i["Interaction Type"] for i in ints])))
-                data.append({"Binding Mode": mode_idx, "Affinity (kcal/mol)": aff, "RMSD l.b.": rmsd_lb, "RMSD u.b.": rmsd_ub, "Interacting Residues": res_string, "Contact Bond Types": bond_types})
-            except ValueError: continue
-    return pd.DataFrame(data)
-
-def build_styled_html_table(df):
-    html = '<table class="data-table" border="1" cellpadding="5" style="border-collapse: collapse; width:100%; text-align:left;"><thead><tr>'
-    for col in df.columns: html += f'<th style="background-color:#f2f2f2; color:#111;">{col}</th>'
-    html += '</tr></thead><tbody>'
-    for _, row in df.iterrows():
-        html += '<tr>'
-        for col in df.columns:
-            val = row[col]
-            if col == 'Affinity (kcal/mol)':
-                try:
-                    if float(val) > 0: html += f'<td style="color: #c62828; font-weight: bold;">{val}</td>'
-                    else: html += f'<td style="color: #1b5e20; font-weight: bold;">{val}</td>'
-                except: html += f'<td style="color:#111;">{val}</td>'
-            else: html += f'<td style="color:#111;">{val}</td>'
-        html += '</tr>'
-    html += '</tbody></table>'
-    return html
-
 # --- VISUALIZATION CONSTRUCTS ---
 def render_photopharmacology_tutorial():
     """Renders a custom HTML/JS interactive animation to explain the Cis/Trans shape shifting."""
@@ -518,7 +449,7 @@ def render_isomer_comparison(trans_data, cis_data):
     """
     components.html(html_content, height=370)
 
-def render_dual_docking_viewport(protein_data, trans_pose, cis_pose, int_t=[], int_c=[]):
+def render_dual_docking_viewport(protein_data, trans_pose, cis_pose, int_t=[], int_c=[], mode="cartoon", show_surface=False):
     int_js_t = ""
     for interact in int_t:
         rc, lc = interact["r_coord"], interact["l_coord"]
@@ -537,6 +468,12 @@ def render_dual_docking_viewport(protein_data, trans_pose, cis_pose, int_t=[], i
         v_c.addLabel("{interact['Residue Contact']}", {{position:{{x:{rc[0]}, y:{rc[1]}, z:{rc[2]}}}, backgroundColor:'white', fontColor:'black', backgroundOpacity:0.8, fontSize:10}});
         """
 
+    prot_style = "{cartoon: {colorscheme: 'chain', style: 'oval', thickness: 0.6}}"
+    if mode == 'stick': prot_style = "{stick: {colorscheme: 'chain', radius:0.25}}"
+    elif mode == 'spacefill': prot_style = "{sphere: {colorscheme: 'chain', radius:1.1}}"
+    
+    surf_js = "v_t.addSurface($3Dmol.SurfaceType.VDW, {opacity:0.45, colorscheme:{prop:'b',gradient:'rwb'}}, {model:0}); v_c.addSurface($3Dmol.SurfaceType.VDW, {opacity:0.45, colorscheme:{prop:'b',gradient:'rwb'}}, {model:0});" if show_surface else ""
+
     html_content = f"""
     <div style="display: flex; width: 100%; justify-content: space-between; gap: 10px;">
         <div id="dock_trans" style="width: 50%; height: 450px; border:2px solid #2e7d32; border-radius:8px; position:relative; background:#ffffff;">
@@ -550,18 +487,21 @@ def render_dual_docking_viewport(protein_data, trans_pose, cis_pose, int_t=[], i
     <script>
         let v_t = $3Dmol.createViewer(document.getElementById('dock_trans'), {{backgroundColor: '#ffffff'}});
         v_t.addModel(`{protein_data}`, 'pdb');
-        v_t.setStyle({{model: 0}}, {{cartoon: {{colorscheme: 'chain', style: 'oval', thickness: 0.6}}}});
+        v_t.setStyle({{model: 0}}, {prot_style});
         v_t.addModel(`{trans_pose}`, 'pdb');
         v_t.setStyle({{model: 1}}, {{stick: {{colorscheme: 'greenCarbon', radius: 0.28}}}});
         {int_js_t}
-        v_t.zoomTo(); v_t.render();
-
+        
         let v_c = $3Dmol.createViewer(document.getElementById('dock_cis'), {{backgroundColor: '#ffffff'}});
         v_c.addModel(`{protein_data}`, 'pdb');
-        v_c.setStyle({{model: 0}}, {{cartoon: {{colorscheme: 'chain', style: 'oval', thickness: 0.6}}}});
+        v_c.setStyle({{model: 0}}, {prot_style});
         v_c.addModel(`{cis_pose}`, 'pdb');
         v_c.setStyle({{model: 1}}, {{stick: {{colorscheme: 'orangeCarbon', radius: 0.28}}}});
         {int_js_c}
+        
+        {surf_js}
+        
+        v_t.zoomTo(); v_t.render();
         v_c.zoomTo(); v_c.render();
     </script>
     """
@@ -732,7 +672,7 @@ with col_params:
     st.write("---")
     st.header("2. Phase 1: Small Molecule Phytochemical Setup")
     
-    # Updated Phytochemical Library (Native C=C bridges + New Antimicrobials)
+    # Updated Phytochemical Library
     iks_library = {
         "Pterostilbene (Antidiabetic / Anticancer)": "COc1cc(C=Cc2ccc(O)cc2)cc(OC)c1",
         "Resveratrol (Antidiabetic / Anticancer)": "Oc1cc(O)cc(C=Cc2ccc(O)cc2)c1",
@@ -787,37 +727,69 @@ with col_params:
                             shutil.copy("ligand_trans.pdbqt", "ligand.pdbqt")
                             with open("ligand.pdbqt", "r") as f: st.session_state.serialized_ligand_block = f.read()
                     else: st.error("Failed to map constrained 3D coordinates.")
-                else: st.warning("No valid free C=C bridge found in this molecule. Note: Compounds like Plumbagin and Lawsone require an external synthetic azo-linker, as they lack a native stilbene bridge.")
+                else: 
+                    st.warning("No valid free C=C bridge found in this molecule. Note: Compounds like Plumbagin and Lawsone require an external synthetic azo-linker, as they lack a native stilbene bridge.")
+                    st.session_state.has_isomers = False
 
+    # 2D Isomers View right below Phase 3
     if st.session_state.get("has_isomers", False):
+        st.markdown("### 2D Cis/Trans Geometric View")
+        if st.checkbox("👁️ Show 2D Comparison", value=True):
+            engine = Azologizer()
+            col_2d_trans, col_2d_cis = st.columns(2)
+            try:
+                with col_2d_trans: st.image(engine.get_2d_isomer_image(st.session_state.mutated_azo_smiles, "trans"), caption="2D Trans Isomer")
+                with col_2d_cis: st.image(engine.get_2d_isomer_image(st.session_state.mutated_azo_smiles, "cis"), caption="2D Cis Isomer")
+            except Exception: pass
+
+    # --- GEOMETRIC CAVITY SEARCH SITE PANEL ---
+    if st.session_state.target_ready and os.path.exists("protein.pdbqt"):
         st.write("---")
-        st.header("3. Grid Box Mechanics")
-        
-        can_dock = bool(st.session_state.target_ready and st.session_state.ligand_ready)
+        st.header("3. Smart Cavity Pocket Finder")
+        if st.button("🔍 Scan Surface For Structural Cavities", use_container_width=True):
+            with st.spinner("Analyzing macromolecular spatial curvature dynamics..."):
+                pockets_discovered = identify_protein_cavities("protein.pdbqt")
+                st.session_state.detected_pockets = pockets_discovered
+                if pockets_discovered: st.success(f"Successfully mapped {len(pockets_discovered)} surface cavities!")
 
-        if st.button("🌐 Enable Blind Docking (Full Surface)", use_container_width=True):
-            cx, cy, cz, sx, sy, sz = compute_protein_centroid("protein.pdbqt")
-            st.session_state.cx, st.session_state.cy, st.session_state.cz = cx, cy, cz
-            st.session_state.sx, st.session_state.sy, st.session_state.sz = sx, sy, sz
-            st.rerun()
+        if st.session_state.detected_pockets:
+            p_opts = st.session_state.detected_pockets
+            selected_p_idx = st.selectbox("Select Target Computational Cavity:", options=range(len(p_opts)), format_func=lambda idx: f"{p_opts[idx]['Pocket_ID']} (Density Score: {p_opts[idx]['Score']})")
+            if st.button("🎯 Align Grid Parameters to This Cavity"):
+                chosen_p = p_opts[selected_p_idx]
+                st.session_state.cx, st.session_state.cy, st.session_state.cz = chosen_p["cx"], chosen_p["cy"], chosen_p["cz"]
+                st.session_state.sx, st.session_state.sy, st.session_state.sz = chosen_p["bx"], chosen_p["by"], chosen_p["bz"]
+                st.success(f"Grid coordinates targeted over pocket space!")
+                st.rerun()
 
-        c_col1, c_col2, c_col3 = st.columns(3)
-        grid_cx = c_col1.number_input("Center X", value=float(st.session_state.cx), step=1.0)
-        grid_cy = c_col2.number_input("Center Y", value=float(st.session_state.cy), step=1.0)
-        grid_cz = c_col3.number_input("Center Z", value=float(st.session_state.cz), step=1.0)
-        
-        grid_sx = c_col1.number_input("Size X", value=float(st.session_state.sx), step=1.0)
-        grid_sy = c_col2.number_input("Size Y", value=float(st.session_state.sy), step=1.0)
-        grid_sz = c_col3.number_input("Size Z", value=float(st.session_state.sz), step=1.0)
-        exhaustiveness = st.slider("Search Exhaustiveness", 4, 32, 8)
+    st.write("---")
+    st.header("4. Grid Box Mechanics")
+    
+    can_dock = bool(st.session_state.target_ready and st.session_state.ligand_ready)
 
-        st.write("---")
-        st.header("🚀 4. Execute Docking")
-        
-        run_single_btn = st.button("Initialize Docking Algorithm (Single Run Mode)", type="secondary", disabled=not can_dock)
-        
-        st.markdown("Run AutoDock Vina sequentially on **Native**, **Trans**, and **Cis** to construct a comparative matrix.")
-        run_comp_btn = st.button("⚡ Run Full Comparative Docking Sequence", type="primary", disabled=not can_dock)
+    if st.button("🌐 Enable Blind Docking (Full Surface)", use_container_width=True):
+        cx, cy, cz, sx, sy, sz = compute_protein_centroid("protein.pdbqt")
+        st.session_state.cx, st.session_state.cy, st.session_state.cz = cx, cy, cz
+        st.session_state.sx, st.session_state.sy, st.session_state.sz = sx, sy, sz
+        st.rerun()
+
+    c_col1, c_col2, c_col3 = st.columns(3)
+    grid_cx = c_col1.number_input("Center X", value=float(st.session_state.cx), step=1.0)
+    grid_cy = c_col2.number_input("Center Y", value=float(st.session_state.cy), step=1.0)
+    grid_cz = c_col3.number_input("Center Z", value=float(st.session_state.cz), step=1.0)
+    
+    grid_sx = c_col1.number_input("Size X", value=float(st.session_state.sx), step=1.0)
+    grid_sy = c_col2.number_input("Size Y", value=float(st.session_state.sy), step=1.0)
+    grid_sz = c_col3.number_input("Size Z", value=float(st.session_state.sz), step=1.0)
+    exhaustiveness = st.slider("Search Exhaustiveness", 4, 32, 8)
+
+    st.write("---")
+    st.header("🚀 5. Execute Docking")
+    
+    run_single_btn = st.button("Initialize Docking Algorithm (Single Run Mode)", type="secondary", disabled=not can_dock)
+    
+    st.markdown("Run AutoDock Vina sequentially on **Native**, **Trans**, and **Cis** to construct a comparative matrix.")
+    run_comp_btn = st.button("⚡ Run Full Comparative Docking Sequence", type="primary", disabled=not can_dock)
 
 # --- DOCKING EXECUTION LOGIC ---
 if run_single_btn and can_dock:
@@ -850,14 +822,16 @@ elif run_comp_btn and can_dock:
         subprocess.run(cmd_native, capture_output=True, text=True)
         
     progress_bar.progress(33, text="Docking Trans Isomer (Dark State)...")
-    cmd_trans = ["./vina", "--receptor", "protein.pdbqt", "--ligand", "ligand_trans.pdbqt", "--center_x", str(grid_cx), "--center_y", str(grid_cy), "--center_z", str(grid_cz), "--size_x", str(grid_sx), "--size_y", str(grid_sy), "--size_z", str(grid_sz), "--exhaustiveness", str(exhaustiveness), "--out", "docking_trans.pdbqt"]
-    t_proc = subprocess.run(cmd_trans, capture_output=True, text=True)
-    st.session_state.raw_trans_log = t_proc.stdout
+    if os.path.exists("ligand_trans.pdbqt"):
+        cmd_trans = ["./vina", "--receptor", "protein.pdbqt", "--ligand", "ligand_trans.pdbqt", "--center_x", str(grid_cx), "--center_y", str(grid_cy), "--center_z", str(grid_cz), "--size_x", str(grid_sx), "--size_y", str(grid_sy), "--size_z", str(grid_sz), "--exhaustiveness", str(exhaustiveness), "--out", "docking_trans.pdbqt"]
+        t_proc = subprocess.run(cmd_trans, capture_output=True, text=True)
+        st.session_state.raw_trans_log = t_proc.stdout
     
     progress_bar.progress(66, text="Docking Cis Isomer (Light State)...")
-    cmd_cis = ["./vina", "--receptor", "protein.pdbqt", "--ligand", "ligand_cis.pdbqt", "--center_x", str(grid_cx), "--center_y", str(grid_cy), "--center_z", str(grid_cz), "--size_x", str(grid_sx), "--size_y", str(grid_sy), "--size_z", str(grid_sz), "--exhaustiveness", str(exhaustiveness), "--out", "docking_cis.pdbqt"]
-    c_proc = subprocess.run(cmd_cis, capture_output=True, text=True)
-    st.session_state.raw_cis_log = c_proc.stdout
+    if os.path.exists("ligand_cis.pdbqt"):
+        cmd_cis = ["./vina", "--receptor", "protein.pdbqt", "--ligand", "ligand_cis.pdbqt", "--center_x", str(grid_cx), "--center_y", str(grid_cy), "--center_z", str(grid_cz), "--size_x", str(grid_sx), "--size_y", str(grid_sy), "--size_z", str(grid_sz), "--exhaustiveness", str(exhaustiveness), "--out", "docking_cis.pdbqt"]
+        c_proc = subprocess.run(cmd_cis, capture_output=True, text=True)
+        st.session_state.raw_cis_log = c_proc.stdout
     
     progress_bar.progress(100, text="Comparative Docking Complete!")
     st.session_state.comparative_run_complete = True
@@ -867,21 +841,11 @@ elif run_comp_btn and can_dock:
 
 # --- RIGHT COLUMN UI RENDERING ---
 with col_visual:
-    st.header("5. Active Viewport Canvas")
-    
-    if not st.session_state.target_ready and not st.session_state.ligand_ready:
-        render_photopharmacology_tutorial()
+    st.header("6. Active Viewport Canvas")
     
     if st.session_state.docking_results_raw is None and not st.session_state.get("comparative_run_complete", False):
         if st.session_state.get("has_isomers", False):
-            st.markdown("### 🔬 Structural Geometric Comparison")
-            if st.checkbox("👁️ Show 2D Cis/Trans Geometric View", value=True):
-                engine = Azologizer()
-                col_2d_trans, col_2d_cis = st.columns(2)
-                try:
-                    with col_2d_trans: st.image(engine.get_2d_isomer_image(st.session_state.mutated_azo_smiles, "trans"), caption="2D Trans Isomer")
-                    with col_2d_cis: st.image(engine.get_2d_isomer_image(st.session_state.mutated_azo_smiles, "cis"), caption="2D Cis Isomer")
-                except Exception: pass
+            st.markdown("### 🔬 3D Structural Geometric Comparison")
             with open("ligand_trans.pdbqt", "r") as f: t_data = f.read()
             with open("ligand_cis.pdbqt", "r") as f: c_data = f.read()
             render_isomer_comparison(t_data, c_data)
@@ -957,10 +921,13 @@ with col_visual:
                 st.html(html_metric_card)
 
                 col_render, col_mesh = st.columns([1, 1])
-                with col_render: style_mode = re.sub(r'\W+', '', st.radio("Macromolecule Style Mode:", ["Cartoon Ribbon Mesh", "Sticks Profile"]).split()[0].lower())
+                with col_render: style_mode = re.sub(r'\W+', '', st.radio("Macromolecule Style Mode:", ["Cartoon Ribbon Mesh", "Sticks Profile", "Spacefill Surface"]).split()[0].lower())
                 with col_mesh: surf_toggle = st.checkbox("Overlay Pocket Mesh", value=False)
                     
-                render_advanced_modeling_blueprint(receptor_data=protein_data, ligand_data=parsed_poses[selected_pose], mode=style_mode, show_surface=surf_toggle, interactions_list=active_interactions)
+                if style_mode == 'spacefill':
+                    render_advanced_modeling_blueprint(receptor_data=protein_data, ligand_data=parsed_poses[selected_pose], mode='spacefill', show_surface=surf_toggle, interactions_list=active_interactions)
+                else:
+                    render_advanced_modeling_blueprint(receptor_data=protein_data, ligand_data=parsed_poses[selected_pose], mode=style_mode, show_surface=surf_toggle, interactions_list=active_interactions)
 
                 st.markdown("### 📋 Local Contact Residues & Bond Assignments Matrix")
                 if active_interactions:
@@ -970,7 +937,7 @@ with col_visual:
 # --- ADVANCED COMPARATIVE DOCKING RESULT PANEL ---
 if st.session_state.get("comparative_run_complete", False):
     st.write("---")
-    st.header("📊 5. Photopharmacology Analytical Report")
+    st.header("📊 7. Photopharmacology Analytical Report")
     
     t_aff = get_top_affinity_from_pdbqt("docking_trans.pdbqt")
     c_aff = get_top_affinity_from_pdbqt("docking_cis.pdbqt")
@@ -1014,22 +981,35 @@ if st.session_state.get("comparative_run_complete", False):
     poses_t = split_docking_poses("docking_trans.pdbqt")
     poses_c = split_docking_poses("docking_cis.pdbqt")
     
+    int_t_html = "No contacts."
+    int_c_html = "No contacts."
+    
     if os.path.exists("protein.pdbqt"):
         with open("protein.pdbqt", "r") as f: prot_data = f.read()
         
         int_t = compute_spatial_interactions("protein.pdbqt", poses_t[1]) if 1 in poses_t else []
         int_c = compute_spatial_interactions("protein.pdbqt", poses_c[1]) if 1 in poses_c else []
         
+        col_render_comp, col_mesh_comp = st.columns([1, 1])
+        with col_render_comp: comp_style_mode = re.sub(r'\W+', '', st.radio("Comparative Macromolecule Style Mode:", ["Cartoon Ribbon Mesh", "Sticks Profile", "Spacefill Surface"]).split()[0].lower())
+        with col_mesh_comp: comp_surf_toggle = st.checkbox("Overlay Pocket Mesh (Comparative)", value=False)
+        
         if 1 in poses_t and 1 in poses_c:
-            render_dual_docking_viewport(prot_data, poses_t[1], poses_c[1], int_t, int_c)
+            render_dual_docking_viewport(prot_data, poses_t[1], poses_c[1], int_t, int_c, mode=comp_style_mode, show_surface=comp_surf_toggle)
             
         col_t_table, col_c_table = st.columns(2)
         with col_t_table:
             st.markdown("#### Trans Isomer Interactions")
-            if int_t: st.dataframe(pd.DataFrame(int_t)[["Residue Contact", "Interaction Type", "Distance (Å)"]], hide_index=True, use_container_width=True)
+            if int_t: 
+                df_int_t = pd.DataFrame(int_t)[["Residue Contact", "Interaction Type", "Distance (Å)"]]
+                st.dataframe(df_int_t, hide_index=True, use_container_width=True)
+                int_t_html = df_int_t.to_html(index=False)
         with col_c_table:
             st.markdown("#### Cis Isomer Interactions")
-            if int_c: st.dataframe(pd.DataFrame(int_c)[["Residue Contact", "Interaction Type", "Distance (Å)"]], hide_index=True, use_container_width=True)
+            if int_c: 
+                df_int_c = pd.DataFrame(int_c)[["Residue Contact", "Interaction Type", "Distance (Å)"]]
+                st.dataframe(df_int_c, hide_index=True, use_container_width=True)
+                int_c_html = df_int_c.to_html(index=False)
             
     # Redraw the 2D Isomer Images at the bottom of the report
     st.write("---")
@@ -1056,14 +1036,45 @@ if st.session_state.get("comparative_run_complete", False):
             <p><b>Delta G Shift:</b> {delta_g_switch} kcal/mol</p>
             <p><b>Verdict:</b> {verdict.replace('**', '')}</p>
         </div>
+        <hr>
+        <h3 style="color:#111111;">Trans Isomer Interactions</h3>
+        {int_t_html}
+        <h3 style="color:#111111;">Cis Isomer Interactions</h3>
+        {int_c_html}
     </body>
     </html>"""
     
     st.download_button(
-        label="🔥 Download Comparative HTML Report",
+        label="🔥 Download Comprehensive HTML Report",
         data=comp_html_report,
         file_name="PhotoDock_Comparative_Report.html",
         mime="text/html",
         use_container_width=True,
         type="primary"
     )
+
+# --- EDUCATIONAL THEORY & MECHANISM ---
+st.write("---")
+with st.expander("📖 Educational Theory: The Photopharmacology Switch"):
+    st.markdown("""
+    **1. The "Native Scaffold" (The Original Key)**
+    Imagine a metal key that was cut perfectly at the hardware store. It is rigid, strong, and fits perfectly into your front door.
+    
+    * **In Chemistry:** This is your original, natural phytochemical (like Resveratrol or Pterostilbene). It has a natural carbon-carbon (`C=C`) bridge holding it together. It naturally has the perfect shape to fit into the cancer or diabetes receptor and turn it off.
+    
+    **2. The "Trans Azo" (The Modified Key in the Dark)**
+    Now, imagine a scientist cuts your metal key in half and welds a tiny, straight, spring-loaded hinge into the middle of it. As long as you keep this key in the dark, the hinge stays locked completely straight. Because it is straight, it is the exact same shape as the original key, and it still opens your door perfectly.
+    
+    * **In Chemistry:** This is your mutated drug. We removed the `C=C` bridge and replaced it with a nitrogen-nitrogen (`N=N`) azo bridge. The Trans isomer means the molecule is resting in its straight, extended shape. It successfully mimics the Native Scaffold and binds to the receptor. The drug is **ON**.
+    
+    **3. The "Cis Azo" (The Bent Key in the Light)**
+    Now, you take a flashlight and shine it directly onto that spring-loaded hinge. The energy from the light causes the hinge to instantly snap into a sharp "V" shape. Your key is now bent in half. If you try to slide a bent key into a straight lock, it will hit the walls and fail to go in.
+    
+    * **In Chemistry:** When specific light hits the `N=N` azo bridge, the molecule absorbs the energy and physically contorts into the Cis isomer (a 120-degree bend). Because the drug is now bent, it physically crashes into the walls of the receptor pocket and falls out. The drug is **OFF**.
+    
+    ---
+    **See It In Action**
+    Use this interactive visualizer below to click through the three states and see exactly why the geometry matters so much for docking.
+    """)
+    
+    render_photopharmacology_tutorial()

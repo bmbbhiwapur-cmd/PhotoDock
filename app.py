@@ -651,6 +651,7 @@ if "last_uploaded_protein" not in st.session_state: st.session_state.last_upload
 if "last_uploaded_ligand" not in st.session_state: st.session_state.last_uploaded_ligand = "" 
 if "selected_native_ligand" not in st.session_state: st.session_state.selected_native_ligand = "None"
 if "ligand_summary_text" not in st.session_state: st.session_state.ligand_summary_text = ""
+if "azologization_failed" not in st.session_state: st.session_state.azologization_failed = False
 
 # Ensure Action Scopes
 run_single_btn = False
@@ -799,10 +800,13 @@ with col_params:
                     cis_ok, cis_file = engine.generate_3d_isomer_pdbqt(mutated_smiles, "cis", "ligand_cis.pdbqt")
                     if trans_ok and cis_ok:
                         st.session_state.has_isomers = True
+                        st.session_state.azologization_failed = False
                         if os.path.exists("ligand_trans.pdbqt"):
                             shutil.copy("ligand_trans.pdbqt", "ligand.pdbqt")
                             with open("ligand.pdbqt", "r") as f: st.session_state.serialized_ligand_block = f.read()
-                    else: st.error("Failed to map constrained 3D coordinates.")
+                    else: 
+                        st.error("Failed to map constrained 3D coordinates.")
+                        st.session_state.azologization_failed = True
                 else: 
                     st.warning("No valid free C=C bridge found in this molecule. Note: Compounds like Plumbagin and Lawsone require an external synthetic azo-linker, as they lack a native stilbene bridge.")
                     with st.expander("❓ Why did this happen? (Understanding Azologization & Rigid Geometry)", expanded=False):
@@ -831,6 +835,7 @@ with col_params:
                         Instead of trying to bend the rigid core of the molecule itself, chemists synthetically attach an external azobenzene "tail" to one of the molecule's existing functional groups (such as substituting the hydrogen on the –OH group of Lawsone).
                         """)
                     st.session_state.has_isomers = False
+                    st.session_state.azologization_failed = True
 
     # 2D Isomers View right below Phase 3
     if st.session_state.get("has_isomers", False):
@@ -866,7 +871,8 @@ with col_params:
     st.write("---")
     st.header("4. Grid Box Mechanics")
     
-    can_dock = bool(st.session_state.target_ready and st.session_state.ligand_ready)
+    # Circuit breaker: Docking is ONLY allowed if target/ligand are ready AND azologization didn't fail
+    can_dock = bool(st.session_state.target_ready and st.session_state.ligand_ready and not st.session_state.azologization_failed)
 
     if st.button("🌐 Enable Blind Docking (Full Surface)", use_container_width=True):
         cx, cy, cz, sx, sy, sz = compute_protein_centroid("protein.pdbqt")
@@ -886,6 +892,10 @@ with col_params:
 
     st.write("---")
     st.header("🚀 5. Execute Docking")
+    
+    # Render error state if azologization failed blocking the engine
+    if st.session_state.azologization_failed:
+        st.error("🚫 Docking Engine Locked: Azologization failed. Please select a chemically compatible phytochemical with a valid C=C bridge to proceed with photopharmacology docking.")
     
     run_single_btn = st.button("Initialize Docking Algorithm (Single Run Mode)", type="secondary", disabled=not can_dock)
     

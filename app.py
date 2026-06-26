@@ -927,26 +927,54 @@ if run_single_btn and can_dock:
     except Exception as e: st.error(f"Pipeline failed: {e}")
 
 elif run_comp_btn and can_dock:
-    progress_bar = st.progress(0, text="Docking Native Ligand...")
+    # 1. Setup Placeholders for Animation and Progress
+    anim_placeholder = st.empty()
+    progress_bar = st.progress(0, text="Initializing comparative sequence...")
+
+    def trigger_light_state(state):
+        if state == "native":
+            bg, color, msg = "#e8f5e9", "#2e7d32", "🌿 STAGE 1: Docking Native Scaffold (Baseline)"
+        elif state == "dark":
+            bg, color, msg = "#111111", "#4caf50", "🌑 STAGE 2 (DARK STATE): Docking Trans-Isomer..."
+        elif state == "light":
+            bg, color, msg = "#ffebee", "#c62828", "💡 STAGE 3 (PHOTON PULSE): Docking Cis-Isomer..."
+            
+        html = f"""
+        <div style="background:{bg}; padding:25px; border-radius:10px; border:3px solid {color}; text-align:center; transition: background-color 1s ease;">
+            <h2 style="color:{color}; margin:0; animation: pulse 1.5s infinite;">{msg}</h2>
+            <style>@keyframes pulse {{ 0% {{opacity: 0.5;}} 50% {{opacity: 1;}} 100% {{opacity: 0.5;}} }}</style>
+        </div>
+        """
+        anim_placeholder.markdown(html, unsafe_allow_html=True)
+
+    # 2. Native Docking
+    trigger_light_state("native")
+    progress_bar.progress(10, text="Docking Native Ligand...")
     if os.path.exists("ligand_native.pdbqt"):
         cmd_native = ["./vina", "--receptor", "protein.pdbqt", "--ligand", "ligand_native.pdbqt", "--center_x", str(grid_cx), "--center_y", str(grid_cy), "--center_z", str(grid_cz), "--size_x", str(grid_sx), "--size_y", str(grid_sy), "--size_z", str(grid_sz), "--exhaustiveness", str(exhaustiveness), "--out", "docking_native.pdbqt"]
         subprocess.run(cmd_native, capture_output=True, text=True)
         
-    progress_bar.progress(33, text="Docking Trans Isomer (Dark State)...")
+    # 3. Trans Docking (Dark State)
+    trigger_light_state("dark")
+    progress_bar.progress(40, text="Docking Trans Isomer (Dark State)...")
     if os.path.exists("ligand_trans.pdbqt"):
         cmd_trans = ["./vina", "--receptor", "protein.pdbqt", "--ligand", "ligand_trans.pdbqt", "--center_x", str(grid_cx), "--center_y", str(grid_cy), "--center_z", str(grid_cz), "--size_x", str(grid_sx), "--size_y", str(grid_sy), "--size_z", str(grid_sz), "--exhaustiveness", str(exhaustiveness), "--out", "docking_trans.pdbqt"]
         t_proc = subprocess.run(cmd_trans, capture_output=True, text=True)
         st.session_state.raw_trans_log = t_proc.stdout
     
-    progress_bar.progress(66, text="Docking Cis Isomer (Light State)...")
+    # 4. Cis Docking (Light State)
+    trigger_light_state("light")
+    progress_bar.progress(75, text="Docking Cis Isomer (Light State)...")
     if os.path.exists("ligand_cis.pdbqt"):
         cmd_cis = ["./vina", "--receptor", "protein.pdbqt", "--ligand", "ligand_cis.pdbqt", "--center_x", str(grid_cx), "--center_y", str(grid_cy), "--center_z", str(grid_cz), "--size_x", str(grid_sx), "--size_y", str(grid_sy), "--size_z", str(grid_sz), "--exhaustiveness", str(exhaustiveness), "--out", "docking_cis.pdbqt"]
         c_proc = subprocess.run(cmd_cis, capture_output=True, text=True)
         st.session_state.raw_cis_log = c_proc.stdout
     
+    # 5. Cleanup and State Update
     progress_bar.progress(100, text="Comparative Docking Complete!")
+    anim_placeholder.empty() # Remove the animation box
+    
     st.session_state.comparative_run_complete = True
-    st.session_state.docking_results_raw = None # Hide single view
     time.sleep(1)
     st.rerun()
 
@@ -1135,26 +1163,84 @@ if st.session_state.get("comparative_run_complete", False):
         with col_2d_cis_report: st.image(engine.get_2d_isomer_image(st.session_state.mutated_azo_smiles, "cis"), caption="2D Cis Isomer")
     except Exception: pass
             
+    # 1. Escape the raw data so it doesn't break the HTML Javascript strings
+    escaped_prot = prot_data.replace('`', '\\`').replace('$', '\\$').replace('\n', '\\n') if os.path.exists("protein.pdbqt") else ""
+    escaped_trans = poses_t[1].replace('`', '\\`').replace('$', '\\$').replace('\n', '\\n') if 1 in poses_t else ""
+    escaped_cis = poses_c[1].replace('`', '\\`').replace('$', '\\$').replace('\n', '\\n') if 1 in poses_c else ""
+
+    # 2. Build the HTML with embedded viewers
     comp_html_report = f"""<!DOCTYPE html>
     <html>
-    <head><title>PhotoDock Comparative Report</title></head>
-    <body style="font-family: sans-serif; padding: 20px; background-color: #fcfcfc;">
+    <head>
+        <title>PhotoDock Comparative Report</title>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/3Dmol/2.0.4/3Dmol-min.js"></script>
+        <style>
+            body {{ font-family: sans-serif; padding: 20px; background-color: #fcfcfc; color: #111; }}
+            .summary-box {{ background-color: {box_c}; border-left: 6px solid {border_c}; padding: 16px; border-radius: 8px; margin-bottom: 20px; }}
+            .viewer-container {{ display: flex; gap: 20px; margin-bottom: 30px; }}
+            .viewer-box {{ width: 50%; height: 400px; border: 2px solid #ddd; border-radius: 8px; position: relative; }}
+            .viewer-label {{ position: absolute; top: 10px; left: 10px; z-index: 10; background: rgba(255,255,255,0.9); padding: 5px 10px; font-weight: bold; border-radius: 4px; border: 1px solid #ccc; }}
+        </style>
+    </head>
+    <body>
         <h2 style="color: #2e7d32;">🔬 PhotoDock Comparative Analysis Report</h2>
         <p><b>Target Protein:</b> {st.session_state.protein_name}</p>
         <p><b>Base Azo-Scaffold:</b> {st.session_state.get('mutated_azo_smiles', 'N/A')}</p>
-        <hr>
-        <div style="background-color:{box_c}; border-left:6px solid {border_c}; padding:16px; border-radius:8px; color:#111111;">
-            <h3 style="color:#111111;">Comparative Statement (ΔΔG)</h3>
+        
+        <div class="summary-box">
+            <h3>Comparative Statement (ΔΔG)</h3>
             <p><b>Trans Isomer Affinity (Dark State):</b> {t_aff} kcal/mol</p>
             <p><b>Cis Isomer Affinity (Light State):</b> {c_aff} kcal/mol</p>
             <p><b>Delta G Shift:</b> {delta_g_switch} kcal/mol</p>
             <p><b>Verdict:</b> {verdict.replace('**', '')}</p>
         </div>
-        <hr>
-        <h3 style="color:#111111;">Trans Isomer Interactions</h3>
-        {int_t_html}
-        <h3 style="color:#111111;">Cis Isomer Interactions</h3>
-        {int_c_html}
+
+        <h3>Interactive 3D Binding Topologies</h3>
+        <div class="viewer-container">
+            <div id="viewer_trans" class="viewer-box">
+                <div class="viewer-label" style="color:#2e7d32;">Trans Pose (Dark)</div>
+            </div>
+            <div id="viewer_cis" class="viewer-box">
+                <div class="viewer-label" style="color:#c62828;">Cis Pose (Light)</div>
+            </div>
+        </div>
+
+        <script>
+            // Initialize Trans Viewer
+            let v_t = $3Dmol.createViewer('viewer_trans', {{backgroundColor: '#ffffff'}});
+            if (`{escaped_prot}` !== "") {{
+                v_t.addModel(`{escaped_prot}`, 'pdb');
+                v_t.setStyle({{}}, {{cartoon: {{colorscheme: 'chain', style: 'oval', thickness: 0.6}}}});
+            }}
+            if (`{escaped_trans}` !== "") {{
+                v_t.addModel(`{escaped_trans}`, 'pdb');
+                v_t.setStyle({{model: 1}}, {{stick: {{colorscheme: 'greenCarbon', radius: 0.28}}}});
+            }}
+            v_t.zoomTo(); v_t.render();
+
+            // Initialize Cis Viewer
+            let v_c = $3Dmol.createViewer('viewer_cis', {{backgroundColor: '#ffffff'}});
+            if (`{escaped_prot}` !== "") {{
+                v_c.addModel(`{escaped_prot}`, 'pdb');
+                v_c.setStyle({{}}, {{cartoon: {{colorscheme: 'chain', style: 'oval', thickness: 0.6}}}});
+            }}
+            if (`{escaped_cis}` !== "") {{
+                v_c.addModel(`{escaped_cis}`, 'pdb');
+                v_c.setStyle({{model: 1}}, {{stick: {{colorscheme: 'orangeCarbon', radius: 0.28}}}});
+            }}
+            v_c.zoomTo(); v_c.render();
+        </script>
+
+        <div style="display: flex; gap: 20px;">
+            <div style="width: 50%;">
+                <h3>Trans Isomer Interactions</h3>
+                {int_t_html}
+            </div>
+            <div style="width: 50%;">
+                <h3>Cis Isomer Interactions</h3>
+                {int_c_html}
+            </div>
+        </div>
     </body>
     </html>"""
     

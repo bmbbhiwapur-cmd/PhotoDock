@@ -1012,7 +1012,8 @@ with col_visual:
                     """
                     components.html(ligand_html, height=450)
                 
-    elif st.session_state.docking_results_raw is not None and not st.session_state.get("comparative_run_complete", False):
+    # --- SINGLE RUN VIEW (NATIVE) ---
+    if st.session_state.docking_results_raw is not None:
         st.subheader("Interactive Single Run Complex Viewport")
         if os.path.exists("docking_poses.pdbqt"):
             parsed_poses = split_docking_poses("docking_poses.pdbqt")
@@ -1125,6 +1126,8 @@ if st.session_state.get("comparative_run_complete", False):
     
     int_t_html = "No contacts."
     int_c_html = "No contacts."
+    int_t = []
+    int_c = []
     
     if os.path.exists("protein.pdbqt"):
         with open("protein.pdbqt", "r") as f: prot_data = f.read()
@@ -1163,12 +1166,24 @@ if st.session_state.get("comparative_run_complete", False):
         with col_2d_cis_report: st.image(engine.get_2d_isomer_image(st.session_state.mutated_azo_smiles, "cis"), caption="2D Cis Isomer")
     except Exception: pass
             
-    # 1. Escape the raw data so it doesn't break the HTML Javascript strings
+    # Extract native pose for HTML report processing
+    escaped_native = ""
+    int_n_html = "No contacts."
+    int_n = []
+    if os.path.exists("docking_native.pdbqt"):
+        poses_n = split_docking_poses("docking_native.pdbqt")
+        if 1 in poses_n:
+            escaped_native = poses_n[1].replace('`', '\\`').replace('$', '\\$').replace('\n', '\\n')
+            int_n = compute_spatial_interactions("protein.pdbqt", poses_n[1])
+            if int_n:
+                df_int_n = pd.DataFrame(int_n)[["Residue Contact", "Interaction Type", "Distance (Å)"]]
+                int_n_html = df_int_n.to_html(index=False)
+
     escaped_prot = prot_data.replace('`', '\\`').replace('$', '\\$').replace('\n', '\\n') if os.path.exists("protein.pdbqt") else ""
     escaped_trans = poses_t[1].replace('`', '\\`').replace('$', '\\$').replace('\n', '\\n') if 1 in poses_t else ""
     escaped_cis = poses_c[1].replace('`', '\\`').replace('$', '\\$').replace('\n', '\\n') if 1 in poses_c else ""
 
-    # 2. Build the HTML with embedded viewers
+    # Build the HTML with embedded viewers and dynamic JS layout
     comp_html_report = f"""<!DOCTYPE html>
     <html>
     <head>
@@ -1177,26 +1192,41 @@ if st.session_state.get("comparative_run_complete", False):
         <style>
             body {{ font-family: sans-serif; padding: 20px; background-color: #fcfcfc; color: #111; }}
             .summary-box {{ background-color: {box_c}; border-left: 6px solid {border_c}; padding: 16px; border-radius: 8px; margin-bottom: 20px; }}
-            .viewer-container {{ display: flex; gap: 20px; margin-bottom: 30px; }}
-            .viewer-box {{ width: 50%; height: 400px; border: 2px solid #ddd; border-radius: 8px; position: relative; }}
+            .grid-box {{ background-color: #f0f7f4; border-left: 6px solid #455a64; padding: 16px; border-radius: 8px; margin-bottom: 20px; }}
+            .viewer-container {{ display: flex; gap: 20px; margin-bottom: 30px; justify-content: space-between; }}
+            .viewer-box {{ width: 32%; height: 400px; border: 2px solid #ddd; border-radius: 8px; position: relative; }}
             .viewer-label {{ position: absolute; top: 10px; left: 10px; z-index: 10; background: rgba(255,255,255,0.9); padding: 5px 10px; font-weight: bold; border-radius: 4px; border: 1px solid #ccc; }}
+            .footer {{ text-align: center; margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 12px; color: #777; }}
         </style>
     </head>
     <body>
-        <h2 style="color: #2e7d32;">🔬 PhotoDock Comparative Analysis Report</h2>
+        <h2 style="color: #2e7d32; margin-bottom: 5px;">PhotoDock (सूर्य-संयोग-चिकित्सा) - Precision Photopharmacology</h2>
+        <h4 style="color: #555; margin-top: 0;">From Ancient Sun Therapy to Red-Light Precision Antibiotics. Developed & Lead Architect: Dr. Sarang S. Dhote.</h4>
+        
         <p><b>Target Protein:</b> {st.session_state.protein_name}</p>
         <p><b>Base Azo-Scaffold:</b> {st.session_state.get('mutated_azo_smiles', 'N/A')}</p>
         
         <div class="summary-box">
-            <h3>Comparative Statement (ΔΔG)</h3>
+            <h3 style="margin-top:0;">Comparative Statement (ΔΔG)</h3>
+            <p><b>Native Isomer Affinity:</b> {n_aff} kcal/mol</p>
             <p><b>Trans Isomer Affinity (Dark State):</b> {t_aff} kcal/mol</p>
             <p><b>Cis Isomer Affinity (Light State):</b> {c_aff} kcal/mol</p>
-            <p><b>Delta G Shift:</b> {delta_g_switch} kcal/mol</p>
+            <p><b>Delta G Shift (Trans vs Cis):</b> {delta_g_switch} kcal/mol</p>
             <p><b>Verdict:</b> {verdict.replace('**', '')}</p>
+        </div>
+
+        <div class="grid-box">
+            <h3 style="margin-top:0;">Computational Grid Configuration</h3>
+            <p><b>Center (X, Y, Z):</b> {grid_cx}, {grid_cy}, {grid_cz}</p>
+            <p><b>Size (X, Y, Z):</b> {grid_sx}, {grid_sy}, {grid_sz}</p>
+            <p><b>Exhaustiveness:</b> {exhaustiveness}</p>
         </div>
 
         <h3>Interactive 3D Binding Topologies</h3>
         <div class="viewer-container">
+            <div id="viewer_native" class="viewer-box">
+                <div class="viewer-label" style="color:#1565c0;">Native Pose</div>
+            </div>
             <div id="viewer_trans" class="viewer-box">
                 <div class="viewer-label" style="color:#2e7d32;">Trans Pose (Dark)</div>
             </div>
@@ -1206,7 +1236,28 @@ if st.session_state.get("comparative_run_complete", False):
         </div>
 
         <script>
-            // Initialize Trans Viewer
+            function renderInteractions(viewer, interactions) {{
+                interactions.forEach(i => {{
+                    let c = i["Interaction Type"].includes("Hydrogen") ? "yellow" : "cyan";
+                    viewer.addCylinder({{start:{{x:i.r_coord[0], y:i.r_coord[1], z:i.r_coord[2]}}, end:{{x:i.l_coord[0], y:i.l_coord[1], z:i.l_coord[2]}}, radius:0.07, color:c, dashed:true}});
+                    viewer.addLabel(i["Residue Contact"], {{position:{{x:i.r_coord[0], y:i.r_coord[1], z:i.r_coord[2]}}, backgroundColor:'white', fontColor:'black', backgroundOpacity:0.8, fontSize:10}});
+                }});
+            }}
+
+            // Native Viewer
+            let v_n = $3Dmol.createViewer('viewer_native', {{backgroundColor: '#ffffff'}});
+            if (`{escaped_prot}` !== "") {{
+                v_n.addModel(`{escaped_prot}`, 'pdb');
+                v_n.setStyle({{}}, {{cartoon: {{colorscheme: 'chain', style: 'oval', thickness: 0.6}}}});
+            }}
+            if (`{escaped_native}` !== "") {{
+                v_n.addModel(`{escaped_native}`, 'pdb');
+                v_n.setStyle({{model: 1}}, {{stick: {{colorscheme: 'blueCarbon', radius: 0.28}}}});
+            }}
+            renderInteractions(v_n, {json.dumps(int_n)});
+            v_n.zoomTo(); v_n.render();
+
+            // Trans Viewer
             let v_t = $3Dmol.createViewer('viewer_trans', {{backgroundColor: '#ffffff'}});
             if (`{escaped_prot}` !== "") {{
                 v_t.addModel(`{escaped_prot}`, 'pdb');
@@ -1216,9 +1267,10 @@ if st.session_state.get("comparative_run_complete", False):
                 v_t.addModel(`{escaped_trans}`, 'pdb');
                 v_t.setStyle({{model: 1}}, {{stick: {{colorscheme: 'greenCarbon', radius: 0.28}}}});
             }}
+            renderInteractions(v_t, {json.dumps(int_t)});
             v_t.zoomTo(); v_t.render();
 
-            // Initialize Cis Viewer
+            // Cis Viewer
             let v_c = $3Dmol.createViewer('viewer_cis', {{backgroundColor: '#ffffff'}});
             if (`{escaped_prot}` !== "") {{
                 v_c.addModel(`{escaped_prot}`, 'pdb');
@@ -1228,18 +1280,27 @@ if st.session_state.get("comparative_run_complete", False):
                 v_c.addModel(`{escaped_cis}`, 'pdb');
                 v_c.setStyle({{model: 1}}, {{stick: {{colorscheme: 'orangeCarbon', radius: 0.28}}}});
             }}
+            renderInteractions(v_c, {json.dumps(int_c)});
             v_c.zoomTo(); v_c.render();
         </script>
 
         <div style="display: flex; gap: 20px;">
-            <div style="width: 50%;">
-                <h3>Trans Isomer Interactions</h3>
+            <div style="width: 33%;">
+                <h4>Native Isomer Interactions</h4>
+                {int_n_html}
+            </div>
+            <div style="width: 33%;">
+                <h4>Trans Isomer Interactions</h4>
                 {int_t_html}
             </div>
-            <div style="width: 50%;">
-                <h3>Cis Isomer Interactions</h3>
+            <div style="width: 33%;">
+                <h4>Cis Isomer Interactions</h4>
                 {int_c_html}
             </div>
+        </div>
+        
+        <div class="footer">
+            &copy; Copyright by Sarang Dhote
         </div>
     </body>
     </html>"""

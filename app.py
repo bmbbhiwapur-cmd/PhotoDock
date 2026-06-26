@@ -805,6 +805,31 @@ with col_params:
                     else: st.error("Failed to map constrained 3D coordinates.")
                 else: 
                     st.warning("No valid free C=C bridge found in this molecule. Note: Compounds like Plumbagin and Lawsone require an external synthetic azo-linker, as they lack a native stilbene bridge.")
+                    with st.expander("❓ Why did this happen? (Understanding Azologization & Rigid Geometry)", expanded=False):
+                        st.markdown("""
+                        **1. The Requirement of a Molecular "Hinge"**
+                        For a molecule to dramatically change its shape when hit by a photon (isomerizing from an elongated *trans* state to a bent *cis* state), it requires a flexible, acyclic (non-ring) "hinge."
+                        
+                        The most common hinges used in drug design are:
+                        * **Azobenzenes** (–N=N– bridge)
+                        * **Stilbenes** (–C=C– bridge)
+                        
+                        When light hits these linear bridges, the double bond is temporarily excited and twists, physically bending the molecule by roughly 40 to 50 degrees. For this to work, the double bond must be free to rotate in 3D space.
+
+                        **2. The Rigid Geometry of Plumbagin & Lawsone**
+                        Plumbagin and Lawsone belong to a class of compounds called naphthoquinones. Their structures consist of two fused, highly planar six-membered rings (a benzene ring fused to a quinone ring).
+                        
+                        While these molecules do contain double bonds (both C=C and C=O), all of these double bonds are **locked inside a rigid, closed ring system.** Geometrically, a double bond inside a standard six-membered ring is permanently locked in the *cis* conformation relative to the ring's continuous chain.
+                        
+                        If you attempt to force a double bond inside a six-membered ring to flip to a *trans* configuration, the ring would physically shatter due to immense geometric strain.
+                        
+                        **"Azologization"** is a specific synthetic strategy where a chemist (or an algorithm) looks for an existing, free-spinning C=C double bond in a drug and replaces it with an N=N azobenzene bond. Because Plumbagin and Lawsone lack a free, linear alkene chain sticking out of the molecule, the algorithm correctly throws an error: there is no native bridge to replace.
+
+                        **3. The Solution: External Synthetic Linkers (Tethering)**
+                        When a drug candidate has a rigid core but possesses excellent medicinal properties, photopharmacologists use a different strategy called **Pendant Photoswitching (or tethering)**.
+                        
+                        Instead of trying to bend the rigid core of the molecule itself, chemists synthetically attach an external azobenzene "tail" to one of the molecule's existing functional groups (such as substituting the hydrogen on the –OH group of Lawsone).
+                        """)
                     st.session_state.has_isomers = False
 
     # 2D Isomers View right below Phase 3

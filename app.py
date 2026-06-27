@@ -540,8 +540,17 @@ def render_dual_docking_viewport(protein_data, trans_pose, cis_pose, int_t=[], i
     prot_style = "{cartoon: {colorscheme: 'chain', style: 'oval', thickness: 0.6}}"
     if 'stick' in mode: prot_style = "{stick: {colorscheme: 'chain', radius:0.25}}"
     elif 'spacefill' in mode: prot_style = "{sphere: {colorscheme: 'chain', radius:1.1}}"
+    elif 'focus' in mode: prot_style = "{cartoon: {color: '#e0e0e0', style: 'oval', thickness: 0.2, opacity: 0.5}}"
     
     surf_js = "v_t.addSurface($3Dmol.SurfaceType.VDW, {opacity:0.45, colorscheme:{prop:'b',gradient:'rwb'}}, {model:0}); v_c.addSurface($3Dmol.SurfaceType.VDW, {opacity:0.45, colorscheme:{prop:'b',gradient:'rwb'}}, {model:0});" if show_surface else ""
+
+    focus_js_t, focus_js_c = "", ""
+    if 'focus' in mode:
+        r_t = list(set([re.search(r'\d+', i["Residue Contact"]).group() for i in int_t if re.search(r'\d+', i["Residue Contact"])]))
+        if r_t: focus_js_t = f"v_t.addStyle({{model: 0, resi: [{','.join(r_t)}]}}, {{stick: {{colorscheme: 'cyanCarbon', radius: 0.25}}}});"
+        
+        r_c = list(set([re.search(r'\d+', i["Residue Contact"]).group() for i in int_c if re.search(r'\d+', i["Residue Contact"])]))
+        if r_c: focus_js_c = f"v_c.addStyle({{model: 0, resi: [{','.join(r_c)}]}}, {{stick: {{colorscheme: 'cyanCarbon', radius: 0.25}}}});"
 
     html_content = f"""
     <div style="display: flex; width: 100%; justify-content: space-between; gap: 10px;">
@@ -557,6 +566,7 @@ def render_dual_docking_viewport(protein_data, trans_pose, cis_pose, int_t=[], i
         let v_t = $3Dmol.createViewer(document.getElementById('dock_trans'), {{backgroundColor: '#ffffff'}});
         v_t.addModel(`{protein_data}`, 'pdb');
         v_t.setStyle({{model: 0}}, {prot_style});
+        {focus_js_t}
         v_t.addModel(`{trans_pose}`, 'pdb');
         v_t.setStyle({{model: 1}}, {{stick: {{colorscheme: 'greenCarbon', radius: 0.28}}}});
         {int_js_t}
@@ -564,6 +574,7 @@ def render_dual_docking_viewport(protein_data, trans_pose, cis_pose, int_t=[], i
         let v_c = $3Dmol.createViewer(document.getElementById('dock_cis'), {{backgroundColor: '#ffffff'}});
         v_c.addModel(`{protein_data}`, 'pdb');
         v_c.setStyle({{model: 0}}, {prot_style});
+        {focus_js_c}
         v_c.addModel(`{cis_pose}`, 'pdb');
         v_c.setStyle({{model: 1}}, {{stick: {{colorscheme: 'orangeCarbon', radius: 0.28}}}});
         {int_js_c}
@@ -587,6 +598,12 @@ def render_advanced_modeling_blueprint(receptor_data, ligand_data, mode="cartoon
         viewer.addCylinder({{start:{{x:{rc[0]}, y:{rc[1]}, z:{rc[2]}}}, end:{{x:{lc[0]}, y:{lc[1]}, z:{lc[2]}}}, radius:0.07, color:'{color}', dashed:true}});
         viewer.addLabel("{interact['Residue Contact']} ({interact['Distance (Å)']}A)", {{position:{{x:{rc[0]}, y:{rc[1]}, z:{rc[2]}}}, backgroundColor:'white', fontColor:'black', backgroundOpacity:0.8, fontSize:11}});
         """
+        
+    focus_js = ""
+    if 'focus' in mode:
+        r_l = list(set([re.search(r'\d+', i["Residue Contact"]).group() for i in interactions_list if re.search(r'\d+', i["Residue Contact"])]))
+        if r_l: focus_js = f"viewer.addStyle({{model: 0, resi: [{','.join(r_l)}]}}, {{stick: {{colorscheme: 'cyanCarbon', radius: 0.25}}}});"
+
     html_content = f"""
     <div id="wrapper_div" style="position:relative; width:100%;">
         <button onclick="toggleFullScreen()" style="position:absolute; top:12px; right:12px; z-index:9999; padding:6px 12px; background:#007bff; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:bold; font-family:sans-serif; box-shadow:0 2px 4px rgba(0,0,0,0.15);">🖥 Fullscreen View</button>
@@ -599,9 +616,11 @@ def render_advanced_modeling_blueprint(receptor_data, ligand_data, mode="cartoon
             viewer.addModel(`{receptor_data}`, 'pdb');
             if ('{mode}'.includes('cartoon')) {{ viewer.setStyle({{model: 0}}, {{cartoon: {{colorscheme: 'chain', style: 'oval', thickness: 0.6}}}});
             }} else if ('{mode}'.includes('spacefill')) {{ viewer.setStyle({{model: 0}}, {{sphere: {{colorscheme: 'chain', radius:1.1}}}});
+            }} else if ('{mode}'.includes('focus')) {{ viewer.setStyle({{model: 0}}, {{cartoon: {{color: '#e0e0e0', style: 'oval', thickness: 0.2, opacity: 0.5}}}});
             }} else {{ viewer.setStyle({{model: 0}}, {{stick: {{colorscheme: 'chain', radius:0.25}}}}); }}
         }}
         {surface_js}
+        {focus_js}
         if (`{ligand_data}`.trim().length > 0) {{
             viewer.addModel(`{ligand_data}`, 'pdb');
             viewer.setStyle({{model: 1}}, {{stick: {{colorscheme: 'greenCarbon', radius: 0.28}}}});
@@ -652,6 +671,9 @@ if "last_uploaded_ligand" not in st.session_state: st.session_state.last_uploade
 if "selected_native_ligand" not in st.session_state: st.session_state.selected_native_ligand = "None"
 if "ligand_summary_text" not in st.session_state: st.session_state.ligand_summary_text = ""
 if "azologization_failed" not in st.session_state: st.session_state.azologization_failed = False
+
+# New shared style options array
+style_options = ["Cartoon Ribbon Mesh", "Sticks Profile", "Spacefill Surface", "Focus: Active Site Contacts"]
 
 # Ensure Action Scopes
 run_single_btn = False
@@ -1064,8 +1086,8 @@ with col_visual:
                 st.html(html_metric_card)
 
                 col_render, col_mesh = st.columns([1, 1])
-                with col_render: style_mode = re.sub(r'\W+', '', st.radio("Macromolecule Style Mode:", ["Cartoon Ribbon Mesh", "Sticks Profile", "Spacefill Surface"]).split()[0].lower())
-                with col_mesh: surf_toggle = st.checkbox("Overlay Pocket Mesh", value=False)
+                with col_render: style_mode = re.sub(r'\W+', '', st.radio("Macromolecule Style Mode:", style_options, key="single_mode").split()[0].lower())
+                with col_mesh: surf_toggle = st.checkbox("Overlay Pocket Mesh", value=False, key="single_mesh")
                     
                 render_advanced_modeling_blueprint(receptor_data=protein_data, ligand_data=parsed_poses[selected_pose], mode=style_mode, show_surface=surf_toggle, interactions_list=active_interactions)
 
@@ -1133,8 +1155,8 @@ if st.session_state.get("comparative_run_complete", False):
         int_c = compute_spatial_interactions("protein.pdbqt", poses_c[1]) if 1 in poses_c else []
         
         col_render_comp, col_mesh_comp = st.columns([1, 1])
-        with col_render_comp: comp_style_mode = re.sub(r'\W+', '', st.radio("Comparative Macromolecule Style Mode:", ["Cartoon Ribbon Mesh", "Sticks Profile", "Spacefill Surface"]).split()[0].lower())
-        with col_mesh_comp: comp_surf_toggle = st.checkbox("Overlay Pocket Mesh (Comparative)", value=False)
+        with col_render_comp: comp_style_mode = re.sub(r'\W+', '', st.radio("Comparative Macromolecule Style Mode:", style_options, key="comp_mode").split()[0].lower())
+        with col_mesh_comp: comp_surf_toggle = st.checkbox("Overlay Pocket Mesh (Comparative)", value=False, key="comp_mesh")
         
         if 1 in poses_t and 1 in poses_c:
             render_dual_docking_viewport(prot_data, poses_t[1], poses_c[1], int_t, int_c, mode=comp_style_mode, show_surface=comp_surf_toggle)
@@ -1225,14 +1247,25 @@ if st.session_state.get("comparative_run_complete", False):
         """
 
     # Extract dynamic macromolecule style logic for HTML Report
-    if 'cartoon' in comp_style_mode: prot_style_js = "{cartoon: {colorscheme: 'chain', style: 'oval', thickness: 0.6}}"
-    elif 'stick' in comp_style_mode: prot_style_js = "{stick: {colorscheme: 'chain', radius:0.25}}"
+    if 'stick' in comp_style_mode: prot_style_js = "{stick: {colorscheme: 'chain', radius:0.25}}"
     elif 'spacefill' in comp_style_mode: prot_style_js = "{sphere: {colorscheme: 'chain', radius:1.1}}"
+    elif 'focus' in comp_style_mode: prot_style_js = "{cartoon: {color: '#e0e0e0', style: 'oval', thickness: 0.2, opacity: 0.5}}"
     else: prot_style_js = "{cartoon: {colorscheme: 'chain', style: 'oval', thickness: 0.6}}"
     
     surf_n_js = "v_n.addSurface($3Dmol.SurfaceType.VDW, {opacity:0.45, colorscheme:{prop:'b',gradient:'rwb'}}, {model:0});" if comp_surf_toggle else ""
     surf_t_js = "v_t.addSurface($3Dmol.SurfaceType.VDW, {opacity:0.45, colorscheme:{prop:'b',gradient:'rwb'}}, {model:0});" if comp_surf_toggle else ""
     surf_c_js = "v_c.addSurface($3Dmol.SurfaceType.VDW, {opacity:0.45, colorscheme:{prop:'b',gradient:'rwb'}}, {model:0});" if comp_surf_toggle else ""
+    
+    focus_n_js, focus_t_js, focus_c_js = "", "", ""
+    if 'focus' in comp_style_mode:
+        r_n = list(set([re.search(r'\d+', i["Residue Contact"]).group() for i in int_n if re.search(r'\d+', i["Residue Contact"])]))
+        if r_n: focus_n_js = f"v_n.addStyle({{model: 0, resi: [{','.join(r_n)}]}}, {{stick: {{colorscheme: 'cyanCarbon', radius: 0.25}}}});"
+        
+        r_t = list(set([re.search(r'\d+', i["Residue Contact"]).group() for i in int_t if re.search(r'\d+', i["Residue Contact"])]))
+        if r_t: focus_t_js = f"v_t.addStyle({{model: 0, resi: [{','.join(r_t)}]}}, {{stick: {{colorscheme: 'cyanCarbon', radius: 0.25}}}});"
+        
+        r_c = list(set([re.search(r'\d+', i["Residue Contact"]).group() for i in int_c if re.search(r'\d+', i["Residue Contact"])]))
+        if r_c: focus_c_js = f"v_c.addStyle({{model: 0, resi: [{','.join(r_c)}]}}, {{stick: {{colorscheme: 'cyanCarbon', radius: 0.25}}}});"
 
     # Build the HTML with embedded viewers and dynamic JS layout
     comp_html_report = f"""<!DOCTYPE html>
@@ -1300,6 +1333,7 @@ if st.session_state.get("comparative_run_complete", False):
             if (`{escaped_prot}` !== "") {{
                 v_n.addModel(`{escaped_prot}`, 'pdb');
                 v_n.setStyle({{}}, {prot_style_js});
+                {focus_n_js}
             }}
             if (`{escaped_native}` !== "") {{
                 v_n.addModel(`{escaped_native}`, 'pdb');
@@ -1314,6 +1348,7 @@ if st.session_state.get("comparative_run_complete", False):
             if (`{escaped_prot}` !== "") {{
                 v_t.addModel(`{escaped_prot}`, 'pdb');
                 v_t.setStyle({{}}, {prot_style_js});
+                {focus_t_js}
             }}
             if (`{escaped_trans}` !== "") {{
                 v_t.addModel(`{escaped_trans}`, 'pdb');
@@ -1328,6 +1363,7 @@ if st.session_state.get("comparative_run_complete", False):
             if (`{escaped_prot}` !== "") {{
                 v_c.addModel(`{escaped_prot}`, 'pdb');
                 v_c.setStyle({{}}, {prot_style_js});
+                {focus_c_js}
             }}
             if (`{escaped_cis}` !== "") {{
                 v_c.addModel(`{escaped_cis}`, 'pdb');

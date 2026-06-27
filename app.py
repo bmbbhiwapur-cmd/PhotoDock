@@ -1183,6 +1183,23 @@ if st.session_state.get("comparative_run_complete", False):
     escaped_trans = poses_t[1].replace('`', '\\`').replace('$', '\\$').replace('\n', '\\n') if 1 in poses_t else ""
     escaped_cis = poses_c[1].replace('`', '\\`').replace('$', '\\$').replace('\n', '\\n') if 1 in poses_c else ""
 
+    # Generate Base64 representations for 2D structure images to embed in the offline HTML report
+    trans_img_b64 = ""
+    cis_img_b64 = ""
+    if st.session_state.get("mutated_azo_smiles"):
+        try:
+            img_t = engine.get_2d_isomer_image(st.session_state.mutated_azo_smiles, "trans")
+            buf_t = BytesIO()
+            img_t.save(buf_t, format="PNG")
+            trans_img_b64 = base64.b64encode(buf_t.getvalue()).decode("utf-8")
+
+            img_c = engine.get_2d_isomer_image(st.session_state.mutated_azo_smiles, "cis")
+            buf_c = BytesIO()
+            img_c.save(buf_c, format="PNG")
+            cis_img_b64 = base64.b64encode(buf_c.getvalue()).decode("utf-8")
+        except Exception:
+            pass
+
     # Build the HTML with embedded viewers and dynamic JS layout
     comp_html_report = f"""<!DOCTYPE html>
     <html>
@@ -1296,6 +1313,19 @@ if st.session_state.get("comparative_run_complete", False):
             <div style="width: 33%;">
                 <h4>Cis Isomer Interactions</h4>
                 {int_c_html}
+            </div>
+        </div>
+        
+        <hr style="margin-top: 40px;">
+        <h3 style="color:#111111;">2D Isomer Structural Verification</h3>
+        <div style="display: flex; gap: 20px; text-align: center; margin-bottom: 20px;">
+            <div style="width: 50%;">
+                <h4 style="color: #2e7d32;">Trans Isomer (Dark State)</h4>
+                <img src="data:image/png;base64,{trans_img_b64}" style="max-width: 100%; border: 1px solid #ddd; border-radius: 8px;">
+            </div>
+            <div style="width: 50%;">
+                <h4 style="color: #c62828;">Cis Isomer (Light State)</h4>
+                <img src="data:image/png;base64,{cis_img_b64}" style="max-width: 100%; border: 1px solid #ddd; border-radius: 8px;">
             </div>
         </div>
         

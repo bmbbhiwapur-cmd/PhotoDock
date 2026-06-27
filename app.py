@@ -538,8 +538,8 @@ def render_dual_docking_viewport(protein_data, trans_pose, cis_pose, int_t=[], i
         """
 
     prot_style = "{cartoon: {colorscheme: 'chain', style: 'oval', thickness: 0.6}}"
-    if mode == 'stick': prot_style = "{stick: {colorscheme: 'chain', radius:0.25}}"
-    elif mode == 'spacefill': prot_style = "{sphere: {colorscheme: 'chain', radius:1.1}}"
+    if 'stick' in mode: prot_style = "{stick: {colorscheme: 'chain', radius:0.25}}"
+    elif 'spacefill' in mode: prot_style = "{sphere: {colorscheme: 'chain', radius:1.1}}"
     
     surf_js = "v_t.addSurface($3Dmol.SurfaceType.VDW, {opacity:0.45, colorscheme:{prop:'b',gradient:'rwb'}}, {model:0}); v_c.addSurface($3Dmol.SurfaceType.VDW, {opacity:0.45, colorscheme:{prop:'b',gradient:'rwb'}}, {model:0});" if show_surface else ""
 
@@ -597,8 +597,8 @@ def render_advanced_modeling_blueprint(receptor_data, ligand_data, mode="cartoon
         let viewer = $3Dmol.createViewer(document.getElementById('container'), {{backgroundColor: '#ffffff'}});
         if (`{receptor_data}`.trim().length > 0) {{
             viewer.addModel(`{receptor_data}`, 'pdb');
-            if ('{mode}' === 'cartoon') {{ viewer.setStyle({{model: 0}}, {{cartoon: {{colorscheme: 'chain', style: 'oval', thickness: 0.6}}}});
-            }} else if ('{mode}' === 'spacefill') {{ viewer.setStyle({{model: 0}}, {{sphere: {{colorscheme: 'chain', radius:1.1}}}});
+            if ('{mode}'.includes('cartoon')) {{ viewer.setStyle({{model: 0}}, {{cartoon: {{colorscheme: 'chain', style: 'oval', thickness: 0.6}}}});
+            }} else if ('{mode}'.includes('spacefill')) {{ viewer.setStyle({{model: 0}}, {{sphere: {{colorscheme: 'chain', radius:1.1}}}});
             }} else {{ viewer.setStyle({{model: 0}}, {{stick: {{colorscheme: 'chain', radius:0.25}}}}); }}
         }}
         {surface_js}
@@ -1067,10 +1067,7 @@ with col_visual:
                 with col_render: style_mode = re.sub(r'\W+', '', st.radio("Macromolecule Style Mode:", ["Cartoon Ribbon Mesh", "Sticks Profile", "Spacefill Surface"]).split()[0].lower())
                 with col_mesh: surf_toggle = st.checkbox("Overlay Pocket Mesh", value=False)
                     
-                if style_mode == 'spacefill':
-                    render_advanced_modeling_blueprint(receptor_data=protein_data, ligand_data=parsed_poses[selected_pose], mode='spacefill', show_surface=surf_toggle, interactions_list=active_interactions)
-                else:
-                    render_advanced_modeling_blueprint(receptor_data=protein_data, ligand_data=parsed_poses[selected_pose], mode=style_mode, show_surface=surf_toggle, interactions_list=active_interactions)
+                render_advanced_modeling_blueprint(receptor_data=protein_data, ligand_data=parsed_poses[selected_pose], mode=style_mode, show_surface=surf_toggle, interactions_list=active_interactions)
 
                 st.markdown("### 📋 Local Contact Residues & Bond Assignments Matrix")
                 if active_interactions:
@@ -1228,9 +1225,9 @@ if st.session_state.get("comparative_run_complete", False):
         """
 
     # Extract dynamic macromolecule style logic for HTML Report
-    if comp_style_mode == 'cartoon': prot_style_js = "{cartoon: {colorscheme: 'chain', style: 'oval', thickness: 0.6}}"
-    elif comp_style_mode == 'sticks': prot_style_js = "{stick: {colorscheme: 'chain', radius:0.25}}"
-    elif comp_style_mode == 'spacefill': prot_style_js = "{sphere: {colorscheme: 'chain', radius:1.1}}"
+    if 'cartoon' in comp_style_mode: prot_style_js = "{cartoon: {colorscheme: 'chain', style: 'oval', thickness: 0.6}}"
+    elif 'stick' in comp_style_mode: prot_style_js = "{stick: {colorscheme: 'chain', radius:0.25}}"
+    elif 'spacefill' in comp_style_mode: prot_style_js = "{sphere: {colorscheme: 'chain', radius:1.1}}"
     else: prot_style_js = "{cartoon: {colorscheme: 'chain', style: 'oval', thickness: 0.6}}"
     
     surf_n_js = "v_n.addSurface($3Dmol.SurfaceType.VDW, {opacity:0.45, colorscheme:{prop:'b',gradient:'rwb'}}, {model:0});" if comp_surf_toggle else ""

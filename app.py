@@ -1161,10 +1161,21 @@ if st.session_state.get("comparative_run_complete", False):
     st.markdown("### 2D Isomer Structural Verification")
     engine = Azologizer()
     col_2d_trans_report, col_2d_cis_report = st.columns(2)
-    try:
-        with col_2d_trans_report: st.image(engine.get_2d_isomer_image(st.session_state.mutated_azo_smiles, "trans"), caption="2D Trans Isomer")
-        with col_2d_cis_report: st.image(engine.get_2d_isomer_image(st.session_state.mutated_azo_smiles, "cis"), caption="2D Cis Isomer")
-    except Exception: pass
+    
+    # Safely fetch generated azo smiles and render UI images
+    azo_smiles = st.session_state.get("mutated_azo_smiles", "")
+    if azo_smiles:
+        try:
+            with col_2d_trans_report: 
+                img_t_ui = engine.get_2d_isomer_image(azo_smiles, "trans")
+                st.image(img_t_ui, caption="2D Trans Isomer")
+            with col_2d_cis_report: 
+                img_c_ui = engine.get_2d_isomer_image(azo_smiles, "cis")
+                st.image(img_c_ui, caption="2D Cis Isomer")
+        except Exception as e: 
+            st.error(f"Could not render 2D UI structures: {e}")
+    else:
+        st.warning("No Azo-SMILES found in session. Please run Phase 3 Azologization first.")
             
     # Extract native pose for HTML report processing
     escaped_native = ""
@@ -1186,19 +1197,45 @@ if st.session_state.get("comparative_run_complete", False):
     # Generate Base64 representations for 2D structure images to embed in the offline HTML report
     trans_img_b64 = ""
     cis_img_b64 = ""
-    if st.session_state.get("mutated_azo_smiles"):
+    if azo_smiles:
         try:
-            img_t = engine.get_2d_isomer_image(st.session_state.mutated_azo_smiles, "trans")
+            img_t = engine.get_2d_isomer_image(azo_smiles, "trans")
             buf_t = BytesIO()
             img_t.save(buf_t, format="PNG")
             trans_img_b64 = base64.b64encode(buf_t.getvalue()).decode("utf-8")
 
-            img_c = engine.get_2d_isomer_image(st.session_state.mutated_azo_smiles, "cis")
+            img_c = engine.get_2d_isomer_image(azo_smiles, "cis")
             buf_c = BytesIO()
             img_c.save(buf_c, format="PNG")
             cis_img_b64 = base64.b64encode(buf_c.getvalue()).decode("utf-8")
-        except Exception:
-            pass
+        except Exception: pass
+        
+    img_html_section = ""
+    if trans_img_b64 and cis_img_b64:
+        img_html_section = f"""
+        <hr style="margin-top: 40px;">
+        <h3 style="color:#111111;">2D Isomer Structural Verification</h3>
+        <div style="display: flex; gap: 20px; text-align: center; margin-bottom: 20px;">
+            <div style="width: 50%;">
+                <h4 style="color: #2e7d32;">Trans Isomer (Dark State)</h4>
+                <img src="data:image/png;base64,{trans_img_b64}" style="max-width: 100%; border: 1px solid #ddd; border-radius: 8px;">
+            </div>
+            <div style="width: 50%;">
+                <h4 style="color: #c62828;">Cis Isomer (Light State)</h4>
+                <img src="data:image/png;base64,{cis_img_b64}" style="max-width: 100%; border: 1px solid #ddd; border-radius: 8px;">
+            </div>
+        </div>
+        """
+
+    # Extract dynamic macromolecule style logic for HTML Report
+    if comp_style_mode == 'cartoon': prot_style_js = "{cartoon: {colorscheme: 'chain', style: 'oval', thickness: 0.6}}"
+    elif comp_style_mode == 'sticks': prot_style_js = "{stick: {colorscheme: 'chain', radius:0.25}}"
+    elif comp_style_mode == 'spacefill': prot_style_js = "{sphere: {colorscheme: 'chain', radius:1.1}}"
+    else: prot_style_js = "{cartoon: {colorscheme: 'chain', style: 'oval', thickness: 0.6}}"
+    
+    surf_n_js = "v_n.addSurface($3Dmol.SurfaceType.VDW, {opacity:0.45, colorscheme:{prop:'b',gradient:'rwb'}}, {model:0});" if comp_surf_toggle else ""
+    surf_t_js = "v_t.addSurface($3Dmol.SurfaceType.VDW, {opacity:0.45, colorscheme:{prop:'b',gradient:'rwb'}}, {model:0});" if comp_surf_toggle else ""
+    surf_c_js = "v_c.addSurface($3Dmol.SurfaceType.VDW, {opacity:0.45, colorscheme:{prop:'b',gradient:'rwb'}}, {model:0});" if comp_surf_toggle else ""
 
     # Build the HTML with embedded viewers and dynamic JS layout
     comp_html_report = f"""<!DOCTYPE html>
@@ -1265,12 +1302,13 @@ if st.session_state.get("comparative_run_complete", False):
             let v_n = $3Dmol.createViewer('viewer_native', {{backgroundColor: '#ffffff'}});
             if (`{escaped_prot}` !== "") {{
                 v_n.addModel(`{escaped_prot}`, 'pdb');
-                v_n.setStyle({{}}, {{cartoon: {{colorscheme: 'chain', style: 'oval', thickness: 0.6}}}});
+                v_n.setStyle({{}}, {prot_style_js});
             }}
             if (`{escaped_native}` !== "") {{
                 v_n.addModel(`{escaped_native}`, 'pdb');
                 v_n.setStyle({{model: 1}}, {{stick: {{colorscheme: 'blueCarbon', radius: 0.28}}}});
             }}
+            {surf_n_js}
             renderInteractions(v_n, {json.dumps(int_n)});
             v_n.zoomTo(); v_n.render();
 
@@ -1278,12 +1316,13 @@ if st.session_state.get("comparative_run_complete", False):
             let v_t = $3Dmol.createViewer('viewer_trans', {{backgroundColor: '#ffffff'}});
             if (`{escaped_prot}` !== "") {{
                 v_t.addModel(`{escaped_prot}`, 'pdb');
-                v_t.setStyle({{}}, {{cartoon: {{colorscheme: 'chain', style: 'oval', thickness: 0.6}}}});
+                v_t.setStyle({{}}, {prot_style_js});
             }}
             if (`{escaped_trans}` !== "") {{
                 v_t.addModel(`{escaped_trans}`, 'pdb');
                 v_t.setStyle({{model: 1}}, {{stick: {{colorscheme: 'greenCarbon', radius: 0.28}}}});
             }}
+            {surf_t_js}
             renderInteractions(v_t, {json.dumps(int_t)});
             v_t.zoomTo(); v_t.render();
 
@@ -1291,12 +1330,13 @@ if st.session_state.get("comparative_run_complete", False):
             let v_c = $3Dmol.createViewer('viewer_cis', {{backgroundColor: '#ffffff'}});
             if (`{escaped_prot}` !== "") {{
                 v_c.addModel(`{escaped_prot}`, 'pdb');
-                v_c.setStyle({{}}, {{cartoon: {{colorscheme: 'chain', style: 'oval', thickness: 0.6}}}});
+                v_c.setStyle({{}}, {prot_style_js});
             }}
             if (`{escaped_cis}` !== "") {{
                 v_c.addModel(`{escaped_cis}`, 'pdb');
                 v_c.setStyle({{model: 1}}, {{stick: {{colorscheme: 'orangeCarbon', radius: 0.28}}}});
             }}
+            {surf_c_js}
             renderInteractions(v_c, {json.dumps(int_c)});
             v_c.zoomTo(); v_c.render();
         </script>
@@ -1316,18 +1356,7 @@ if st.session_state.get("comparative_run_complete", False):
             </div>
         </div>
         
-        <hr style="margin-top: 40px;">
-        <h3 style="color:#111111;">2D Isomer Structural Verification</h3>
-        <div style="display: flex; gap: 20px; text-align: center; margin-bottom: 20px;">
-            <div style="width: 50%;">
-                <h4 style="color: #2e7d32;">Trans Isomer (Dark State)</h4>
-                <img src="data:image/png;base64,{trans_img_b64}" style="max-width: 100%; border: 1px solid #ddd; border-radius: 8px;">
-            </div>
-            <div style="width: 50%;">
-                <h4 style="color: #c62828;">Cis Isomer (Light State)</h4>
-                <img src="data:image/png;base64,{cis_img_b64}" style="max-width: 100%; border: 1px solid #ddd; border-radius: 8px;">
-            </div>
-        </div>
+        {img_html_section}
         
         <div class="footer">
             &copy; Copyright by Sarang Dhote
